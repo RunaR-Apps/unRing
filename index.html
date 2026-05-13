@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>unRing</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d0d0d;
+      color: #e0e0e0;
+      font-family: system-ui, sans-serif;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border-bottom: 1px solid #222;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: #fff;
+    }
+
+    #upload-btn {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 16px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    #upload-btn:hover { background: #1558b0; }
+
+    #file-input { display: none; }
+
+    #filename {
+      font-size: 0.8rem;
+      color: #888;
+      max-width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #viewport {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #drop-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: #0d0d0d;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 10;
+    }
+
+    #drop-overlay.hidden { opacity: 0; pointer-events: none; }
+
+    #drop-overlay svg { opacity: 0.3; }
+
+    #drop-overlay p {
+      color: #555;
+      font-size: 0.95rem;
+      pointer-events: none;
+    }
+
+    #drop-overlay p span {
+      color: #1a73e8;
+      cursor: pointer;
+      pointer-events: all;
+    }
+
+    /* drag-over highlight */
+    body.drag-over #drop-overlay {
+      background: rgba(13, 13, 13, 0.92);
+    }
+
+    body.drag-over #drop-overlay svg { opacity: 0.6; }
+
+    /* ── Layout: viewport + sidebar ── */
+    #main-area {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    #viewport {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 260px;
+      flex-shrink: 0;
+      background: #111;
+      border-left: 1px solid #222;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+    }
+
+    .sidebar-section {
+      padding: 14px 16px;
+      border-bottom: 1px solid #1e1e1e;
+    }
+
+    .sidebar-section h2 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 10px;
+    }
+
+    /* Source monitor */
+    #source-monitor {
+      width: 100%;
+      aspect-ratio: 1;
+      background: #000;
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #source-monitor video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* Sliders */
+    .slider-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 10px;
+    }
+
+    .slider-row:last-child { margin-bottom: 0; }
+
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: #aaa;
+    }
+
+    .slider-label span { color: #fff; font-variant-numeric: tabular-nums; }
+
+    input[type=range] {
+      width: 100%;
+      accent-color: #1a73e8;
+      cursor: pointer;
+    }
+
+    /* Transport controls */
+    #transport {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #transport button {
+      background: none;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 5px;
+      padding: 6px 10px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+
+    #transport button:hover { background: #1e1e1e; }
+
+    #seek {
+      flex: 1;
+      accent-color: #1a73e8;
+      cursor: pointer;
+    }
+
+    #time-label {
+      font-size: 0.75rem;
+      color: #666;
+      white-space: nowrap;
+      min-width: 80px;
+      text-align: right;
+    }
+
+    /* Aspect ratio presets */
+    #aspect-btns {
+      display: flex;
+      gap: 6px;
+    }
+
+    #aspect-btns button {
+      flex: 1;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #aaa;
+      border-radius: 5px;
+      padding: 6px 4px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+
+    #aspect-btns button.active {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: #fff;
+    }
+
+    /* Volume row */
+    #volume-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #volume-row label { font-size: 0.78rem; color: #aaa; white-space: nowrap; }
+
+    #vol-slider { flex: 1; accent-color: #1a73e8; cursor: pointer; }
+
+    /* Export section */
+    .full-btn {
+      display: block;
+      width: 100%;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 5px;
+      padding: 7px 10px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.12s;
+      margin-bottom: 8px;
+    }
+    .full-btn:hover:not(:disabled) { background: #2a2a2a; }
+    .full-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .full-btn.primary {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: #fff;
+    }
+    .full-btn.primary:hover:not(:disabled) { background: #1558b0; }
+
+    .marker-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 5px 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .marker-grid button {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 5px;
+      padding: 5px 8px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .marker-grid button:hover { background: #2a2a2a; }
+    .marker-grid button.set { border-color: #1a73e8; color: #6ab0ff; }
+    .marker-time {
+      font-size: 0.75rem;
+      color: #555;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+    .marker-time.set { color: #6ab0ff; }
+
+    .fps-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: #aaa;
+      margin-bottom: 8px;
+    }
+    .fps-row select {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 0.78rem;
+      cursor: pointer;
+    }
+
+    #export-progress { margin-top: 6px; }
+    #export-bar {
+      width: 100%;
+      height: 6px;
+      accent-color: #1a73e8;
+      display: block;
+      margin-bottom: 4px;
+    }
+    #export-status {
+      font-size: 0.72rem;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>unRing</h1>
+    <button id="upload-btn">Open Video</button>
+    <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" />
+    <span id="filename">No file loaded</span>
+  </header>
+
+  <div id="main-area">
+    <div id="viewport">
+      <canvas id="canvas"></canvas>
+
+      <div id="drop-overlay">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 8v8M8 12l4-4 4 4"/>
+        </svg>
+        <p>Drop a video here, or <span id="drop-open">click to open</span></p>
+        <p style="font-size:0.78rem; color:#444;">.mp4 &nbsp;·&nbsp; .mov &nbsp;·&nbsp; .webm</p>
+      </div>
+    </div>
+
+    <!-- ── Sidebar ── -->
+    <aside id="sidebar">
+
+      <!-- Source Monitor -->
+      <div class="sidebar-section">
+        <h2>Source (Raw)</h2>
+        <div id="source-monitor">
+          <!-- video mirror populated by JS -->
+        </div>
+      </div>
+
+      <!-- Transport Controls -->
+      <div class="sidebar-section">
+        <h2>Transport</h2>
+        <div id="transport">
+          <button id="play-pause-btn">▶</button>
+          <input type="range" id="seek" min="0" max="1000" value="0" step="1" />
+          <span id="time-label">0:00 / 0:00</span>
+        </div>
+        <div id="volume-row">
+          <label>Vol</label>
+          <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="1" />
+        </div>
+      </div>
+
+      <!-- Lens Calibration -->
+      <div class="sidebar-section">
+        <h2>Lens Calibration</h2>
+
+        <div class="slider-row">
+          <div class="slider-label">Source FOV <span id="src-fov-val">180°</span></div>
+          <input type="range" id="src-fov" min="90" max="240" step="1" value="180" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">Virtual Zoom (FOV) <span id="zoom-val">75°</span></div>
+          <input type="range" id="zoom" min="20" max="120" step="1" value="75" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">Tilt <span id="tilt-val">0°</span></div>
+          <input type="range" id="tilt" min="-45" max="45" step="1" value="0" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">Pitch <span id="pitch-val">0°</span></div>
+          <input type="range" id="pitch" min="-45" max="45" step="1" value="0" />
+        </div>
+
+        <div class="slider-row">
+          <div class="slider-label">Roll <span id="roll-val">0°</span></div>
+          <input type="range" id="roll" min="-45" max="45" step="1" value="0" />
+        </div>
+      </div>
+
+      <!-- Aspect Ratio Presets -->
+      <div class="sidebar-section">
+        <h2>Aspect Ratio</h2>
+        <div id="aspect-btns">
+          <button data-aspect="1" class="active">1:1</button>
+          <button data-aspect="1.3333">4:3</button>
+          <button data-aspect="1.7778">16:9</button>
+        </div>
+      </div>
+
+      <!-- Export -->
+      <div class="sidebar-section">
+        <h2>Export</h2>
+
+        <button class="full-btn" id="save-still-btn" disabled>Save Still (PNG)</button>
+
+        <button class="full-btn" id="import-settings-btn">Import Settings</button>
+        <input type="file" id="settings-input" accept=".json" style="display:none;" />
+
+        <div class="marker-grid">
+          <button id="mark-in-btn">&#9664; Mark In</button>
+          <span id="mark-in-time" class="marker-time">—</span>
+          <button id="mark-out-btn">Mark Out &#9654;</button>
+          <span id="mark-out-time" class="marker-time">—</span>
+        </div>
+
+        <div class="fps-row">
+          <span>Export FPS</span>
+          <select id="export-fps">
+            <option value="24">24 fps</option>
+            <option value="25">25 fps</option>
+            <option value="30" selected>30 fps</option>
+            <option value="50">50 fps</option>
+            <option value="60">60 fps</option>
+          </select>
+        </div>
+
+        <button class="full-btn primary" id="export-avi-btn" disabled>Export AVI (Uncompressed)</button>
+
+        <div id="export-progress" style="display:none;">
+          <progress id="export-bar" max="100" value="0"></progress>
+          <span id="export-status"></span>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- hidden video element used as texture source -->
+  <video id="video" loop crossorigin="anonymous" style="display:none" playsinline></video>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
