@@ -374,6 +374,18 @@ video.addEventListener('play',  () => { playPauseBtn.textContent = '⏸'; });
 video.addEventListener('pause', () => { playPauseBtn.textContent = '▶'; });
 video.addEventListener('ended', () => { playPauseBtn.textContent = '▶'; });
 
+// Update the processed (main) view when seeking while paused.
+video.addEventListener('seeked', () => {
+  if (sourceMode !== 'video' || !videoTexture || !paddedCanvas || !video.paused) return;
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  const maxDim = Math.max(w, h);
+  paddedCanvasCtx.fillStyle = '#000000';
+  paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
+  paddedCanvasCtx.drawImage(video, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
+  videoTexture.needsUpdate = true;
+});
+
 seekSlider.addEventListener('input', () => {
   if (sourceMode === 'sequence') {
     const idx = Math.round((seekSlider.value / 1000) * (seqImages.length - 1));
@@ -387,6 +399,8 @@ seekSlider.addEventListener('input', () => {
     video.currentTime = (seekSlider.value / 1000) * video.duration;
   }
 });
+
+video.volume = 0;
 
 volSlider.addEventListener('input', () => {
   video.volume = Number(volSlider.value);
@@ -472,6 +486,21 @@ function onCanPlay() {
 
   // Don't autoplay — show first frame, wait for user to press play
   video.pause();
+
+  // The browser may not have decoded the first frame yet at canplay time, so
+  // the drawImage above can produce a blank canvas.  Schedule a redraw after
+  // two animation frames to guarantee the decoded frame is copied into the
+  // padded canvas and the Three.js texture is updated.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (sourceMode !== 'video' || !videoTexture || !paddedCanvas) return;
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    const maxDim = Math.max(w, h);
+    paddedCanvasCtx.fillStyle = '#000000';
+    paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
+    paddedCanvasCtx.drawImage(video, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
+    videoTexture.needsUpdate = true;
+  }));
 
   setTransportMode('video');
 
