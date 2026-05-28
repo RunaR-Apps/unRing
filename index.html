@@ -339,28 +339,180 @@
       font-size: 0.72rem;
       color: #666;
     }
+
+    /* ── Overlay Tools ── */
+    #tools-btn {
+      background: #2a2a2a;
+      color: #ccc;
+      border: 1px solid #444;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    #tools-btn:hover { background: #333; }
+    #tools-btn.panel-open { background: #1a3a5c; border-color: #1a73e8; color: #6ab0ff; }
+
+    #tools-panel {
+      position: fixed;
+      top: 52px;
+      right: 274px; /* sit above the sidebar */
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 100;
+      min-width: 178px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    #tools-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    #tools-close-btn {
+      background: none;
+      border: none;
+      color: #555;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 2px;
+      transition: color 0.12s;
+    }
+    #tools-close-btn:hover { color: #ccc; }
+    #tools-panel.hidden { display: none; }
+
+    .tp-title {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 2px;
+    }
+    .tp-sep { border: none; border-top: 1px solid #252525; margin: 2px 0; }
+
+    .tool-create-btn {
+      background: #222;
+      border: 1px solid #3a3a3a;
+      color: #bbb;
+      border-radius: 5px;
+      padding: 7px 10px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.12s;
+    }
+    .tool-create-btn:hover { background: #2c2c2c; }
+    .tool-create-btn.active-mode {
+      background: #1a3a5c;
+      border-color: #1a73e8;
+      color: #6ab0ff;
+    }
+
+    .tp-tool-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tp-tool-row .tool-create-btn { flex: 1; }
+    .tp-tool-row input[type=color] {
+      width: 28px;
+      height: 28px;
+      padding: 2px;
+      border: 1px solid #444;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+      background: #222;
+    }
+    .tp-tool-row input[type=color]::-webkit-color-swatch-wrapper { padding: 1px; }
+    .tp-tool-row input[type=color]::-webkit-color-swatch { border-radius: 2px; border: none; }
+
+    .tp-grid-opts {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .tp-grid-opts label {
+      font-size: 0.74rem;
+      color: #777;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .tp-grid-opts input[type=number] {
+      background: #111;
+      border: 1px solid #333;
+      color: #ccc;
+      border-radius: 4px;
+      padding: 4px 6px;
+      font-size: 0.8rem;
+      width: 100%;
+    }
+
+    /* SVG overlay over the viewport */
+    #overlay-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 20;
+      overflow: visible;
+    }
   </style>
 </head>
 <body>
 
   <header>
     <h1>unRing</h1>
-    <button id="upload-btn">Open Video</button>
-    <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" />
+    <button id="upload-btn">Open File</button>
+    <button id="tools-btn">⊕ Tools</button>
+    <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm,image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif" multiple />
     <span id="filename">No file loaded</span>
   </header>
+
+  <!-- Overlay tools panel (floating) -->
+  <div id="tools-panel" class="hidden">
+    <div id="tools-panel-header">
+      <div class="tp-title" style="margin-bottom:0">Overlay Tools</div>
+      <button id="tools-close-btn" title="Close">✕</button>
+    </div>
+    <div class="tp-tool-row">
+      <input type="color" id="line-color" value="#facc15" title="Line color">
+      <button class="tool-create-btn" id="tool-line-btn">✦ Add Line</button>
+    </div>
+    <hr class="tp-sep">
+    <div class="tp-title">Grid Options</div>
+    <div class="tp-grid-opts">
+      <label>H Cells<input type="number" id="grid-h-cells" value="4" min="1" max="32"></label>
+      <label>V Cells<input type="number" id="grid-v-cells" value="4" min="1" max="32"></label>
+    </div>
+    <div class="tp-tool-row">
+      <input type="color" id="grid-color" value="#22d3ee" title="Grid color">
+      <button class="tool-create-btn" id="tool-grid-btn">⊞ Add Grid</button>
+    </div>
+  </div>
 
   <div id="main-area">
     <div id="viewport">
       <canvas id="canvas"></canvas>
+      <svg id="overlay-svg"></svg>
 
       <div id="drop-overlay">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.2">
           <circle cx="12" cy="12" r="10"/>
           <path d="M12 8v8M8 12l4-4 4 4"/>
         </svg>
-        <p>Drop a video here, or <span id="drop-open">click to open</span></p>
-        <p style="font-size:0.78rem; color:#444;">.mp4 &nbsp;·&nbsp; .mov &nbsp;·&nbsp; .webm</p>
+        <p>Drop a file here, or <span id="drop-open">click to open</span></p>
+        <p style="font-size:0.78rem; color:#444;">.mp4 &nbsp;·&nbsp; .mov &nbsp;·&nbsp; .webm &nbsp;·&nbsp; .jpg &nbsp;·&nbsp; .png &nbsp;·&nbsp; .webp &nbsp;(or multiple images as a sequence)</p>
       </div>
     </div>
 

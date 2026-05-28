@@ -61,6 +61,17 @@ let sphereMesh   = null;
 let paddedCanvas = null;
 let paddedCanvasCtx = null;
 
+// ─── Source mode ──────────────────────────────────────────────────────────────
+// 'none' | 'video' | 'image' | 'sequence'
+let sourceMode = 'none';
+
+// Image / image-sequence state
+let seqUrls    = [];   // Blob URLs (for revokeObjectURL on cleanup)
+let seqImages  = [];   // HTMLImageElement array (one per frame)
+let seqIndex   = 0;    // current frame index (0-based)
+let seqPlaying = false;
+let seqLastMs  = 0;    // timestamp of last frame advance (ms)
+
 function buildSphere(tex) {
   if (sphereMesh) {
     scene.remove(sphereMesh);
@@ -196,9 +207,9 @@ canvas.addEventListener('touchmove', (e) => {
 }, { passive: true });
 
 // ─── Animation loop ──────────────────────────────────────────────────────────
-function tick() {
+function tick(ts) {
   requestAnimationFrame(tick);
-  if (videoTexture && paddedCanvas && !video.paused && !video.ended) {
+  if (sourceMode === 'video' && videoTexture && paddedCanvas && !video.paused && !video.ended) {
     // Update padded canvas with current video frame
     const w = video.videoWidth;
     const h = video.videoHeight;
@@ -210,10 +221,18 @@ function tick() {
     paddedCanvasCtx.drawImage(video, x, y, w, h);
     videoTexture.needsUpdate = true;
     updateSeek();
+  } else if (sourceMode === 'sequence' && seqPlaying && seqImages.length > 0) {
+    const fps = Number(exportFpsEl.value);
+    if (ts - seqLastMs >= 1000 / fps) {
+      seqLastMs = ts;
+      seqIndex = (seqIndex + 1) % seqImages.length;
+      drawSeqFrame(seqIndex);
+      updateSeqSeek();
+    }
   }
   renderer.render(scene, camera);
 }
-tick();
+requestAnimationFrame(tick);
 
 // ─── Fisheye UV remapping ────────────────────────────────────────────────────
 // A circular fisheye image uses equidistant projection:
@@ -296,6 +315,11 @@ rollSlider.addEventListener('input', () => {
 });
 
 // ─── Aspect ratio presets ─────────────────────────────────────────────────────
+function getSelectedAspect() {
+  const active = document.querySelector('#aspect-btns button.active');
+  return active ? Number(active.dataset.aspect) : 1;
+}
+
 document.querySelectorAll('#aspect-btns button').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('#aspect-btns button').forEach(b => b.classList.remove('active'));
@@ -303,6 +327,22 @@ document.querySelectorAll('#aspect-btns button').forEach(btn => {
     targetAspect = Number(btn.dataset.aspect);
     resize();
   });
+});
+
+// ─── Space bar: play / pause ────────────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space') return;
+  // Ignore if the user is typing in an input/select
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  e.preventDefault();
+  if (sourceMode === 'sequence') {
+    seqPlaying = !seqPlaying;
+    playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
+    seqLastMs = 0;
+  } else if (sourceMode === 'video') {
+    if (video.paused) { video.play(); }
+    else              { video.pause(); }
+  }
 });
 
 // ─── Transport controls ───────────────────────────────────────────────────────
@@ -320,8 +360,14 @@ function updateSeek() {
 }
 
 playPauseBtn.addEventListener('click', () => {
-  if (video.paused) { video.play(); }
-  else              { video.pause(); }
+  if (sourceMode === 'sequence') {
+    seqPlaying = !seqPlaying;
+    playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
+    seqLastMs = 0; // reset so first advance waits a full interval
+  } else {
+    if (video.paused) { video.play(); }
+    else              { video.pause(); }
+  }
 });
 
 video.addEventListener('play',  () => { playPauseBtn.textContent = '⏸'; });
@@ -329,8 +375,17 @@ video.addEventListener('pause', () => { playPauseBtn.textContent = '▶'; });
 video.addEventListener('ended', () => { playPauseBtn.textContent = '▶'; });
 
 seekSlider.addEventListener('input', () => {
-  if (!video.duration) return;
-  video.currentTime = (seekSlider.value / 1000) * video.duration;
+  if (sourceMode === 'sequence') {
+    const idx = Math.round((seekSlider.value / 1000) * (seqImages.length - 1));
+    seqIndex = Math.max(0, Math.min(seqImages.length - 1, idx));
+    drawSeqFrame(seqIndex);
+    timeLabel.textContent = `Frame ${seqIndex + 1} / ${seqImages.length}`;
+    const imgEl = sourceMonitor.querySelector('img');
+    if (imgEl && seqUrls[seqIndex]) imgEl.src = seqUrls[seqIndex];
+  } else {
+    if (!video.duration) return;
+    video.currentTime = (seekSlider.value / 1000) * video.duration;
+  }
 });
 
 volSlider.addEventListener('input', () => {
@@ -344,6 +399,9 @@ function loadVideoFile(file) {
     alert('Unsupported file type. Please use .mp4, .mov, or .webm.');
     return;
   }
+
+  sourceMode = 'video';
+  cleanupSeq();
 
   if (video.src) URL.revokeObjectURL(video.src);
 
@@ -391,8 +449,8 @@ function onCanPlay() {
   videoTexture.wrapS = THREE.ClampToEdgeWrapping;
   videoTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Set output aspect ratio based on user selection (default 1:1 now)
-  targetAspect = 1;
+  // Set output aspect ratio based on user selection
+  targetAspect = getSelectedAspect();
   resize();
 
   // UV bake is already applied to the geometry; re-bake in case FOV changed.
@@ -412,7 +470,10 @@ function onCanPlay() {
   video.addEventListener('seeked', () => { mirrorVid.currentTime = video.currentTime; });
   sourceMonitor.appendChild(mirrorVid);
 
-  video.play();
+  // Don't autoplay — show first frame, wait for user to press play
+  video.pause();
+
+  setTransportMode('video');
 
   // Update seek bar range now we know duration
   video.addEventListener('loadedmetadata', updateSeek);
@@ -429,6 +490,203 @@ function onCanPlay() {
     const nearest = opts.reduce((a, b) => Math.abs(b - fps) < Math.abs(a - fps) ? b : a);
     exportFpsEl.value = String(nearest);
   });
+}
+
+// ─── File type helpers ────────────────────────────────────────────────────────
+function isVideoFile(file) {
+  return /\.(mp4|mov|webm)$/i.test(file.name) ||
+    ['video/mp4', 'video/quicktime', 'video/webm'].includes(file.type);
+}
+
+function isImageFile(file) {
+  return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(file.name) ||
+    file.type.startsWith('image/');
+}
+
+// ─── Image / sequence helpers ─────────────────────────────────────────────────
+function cleanupSeq() {
+  seqUrls.forEach(u => URL.revokeObjectURL(u));
+  seqUrls   = [];
+  seqImages = [];
+  seqIndex  = 0;
+  seqPlaying = false;
+}
+
+function drawSeqFrame(index) {
+  const img = seqImages[index];
+  if (!img) return;
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const maxDim = Math.max(w, h);
+  if (!paddedCanvas || paddedCanvas.width !== maxDim) {
+    paddedCanvas = document.createElement('canvas');
+    paddedCanvas.width  = maxDim;
+    paddedCanvas.height = maxDim;
+    paddedCanvasCtx = paddedCanvas.getContext('2d');
+  }
+  paddedCanvasCtx.fillStyle = '#000000';
+  paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
+  paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
+  if (videoTexture) videoTexture.needsUpdate = true;
+}
+
+function updateSeqSeek() {
+  const total = seqImages.length;
+  seekSlider.value = total > 1 ? Math.round((seqIndex / (total - 1)) * 1000) : 0;
+  timeLabel.textContent = `Frame ${seqIndex + 1} / ${total}`;
+  const imgEl = sourceMonitor.querySelector('img');
+  if (imgEl && seqUrls[seqIndex]) imgEl.src = seqUrls[seqIndex];
+}
+
+// Show/hide transport controls based on source mode.
+function setTransportMode(mode) {
+  const volRow = document.getElementById('volume-row');
+  if (mode === 'video') {
+    playPauseBtn.style.display = '';
+    seekSlider.style.display   = '';
+    timeLabel.style.display    = '';
+    volRow.style.display       = '';
+  } else if (mode === 'image') {
+    playPauseBtn.style.display = 'none';
+    seekSlider.style.display   = 'none';
+    timeLabel.style.display    = 'none';
+    volRow.style.display       = 'none';
+  } else if (mode === 'sequence') {
+    playPauseBtn.style.display = '';
+    seekSlider.style.display   = '';
+    timeLabel.style.display    = '';
+    volRow.style.display       = 'none';
+  }
+}
+
+// ─── Image file loading ───────────────────────────────────────────────────────
+function loadImageFile(file) {
+  sourceMode = 'image';
+  cleanupSeq();
+  if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
+
+  const url = URL.createObjectURL(file);
+  seqUrls.push(url);
+  const img = new Image();
+  img.onload = () => {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const maxDim = Math.max(w, h);
+
+    paddedCanvas = document.createElement('canvas');
+    paddedCanvas.width  = maxDim;
+    paddedCanvas.height = maxDim;
+    paddedCanvasCtx = paddedCanvas.getContext('2d');
+    paddedCanvasCtx.fillStyle = '#000';
+    paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
+    paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
+
+    if (videoTexture) videoTexture.dispose();
+    videoTexture = new THREE.CanvasTexture(paddedCanvas);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+    videoTexture.colorSpace = THREE.SRGBColorSpace;
+    videoTexture.wrapS = THREE.ClampToEdgeWrapping;
+    videoTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+    buildSphere(videoTexture);
+    buildFisheyeUVs(Number(srcFovSlider.value));
+    targetAspect = getSelectedAspect();
+    resize();
+
+    sourceMonitor.innerHTML = '';
+    const imgEl = new Image();
+    imgEl.src = url;
+    imgEl.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+    sourceMonitor.appendChild(imgEl);
+
+    filenameLbl.textContent = file.name;
+    dropOverlay.classList.add('hidden');
+    canvas.style.pointerEvents = 'auto';
+    setTransportMode('image');
+    saveStillBtn.disabled = false;
+    updateExportBtnState();
+  };
+  img.onerror = () => alert('Failed to load image: ' + file.name);
+  img.src = url;
+}
+
+// ─── Image sequence loading ───────────────────────────────────────────────────
+function loadImageSequence(files) {
+  sourceMode = 'sequence';
+  cleanupSeq();
+  if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
+
+  // Sort numerically/alphabetically by filename
+  const sorted = Array.from(files).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+  );
+
+  let loaded = 0;
+  seqImages = new Array(sorted.length);
+  sorted.forEach((file, i) => {
+    const url = URL.createObjectURL(file);
+    seqUrls.push(url);
+    const img = new Image();
+    img.onload = () => {
+      seqImages[i] = img;
+      loaded++;
+      if (loaded === sorted.length) onSeqLoaded(sorted);
+    };
+    img.onerror = () => {
+      loaded++;
+      if (loaded === sorted.length) onSeqLoaded(sorted);
+    };
+    img.src = url;
+  });
+}
+
+function onSeqLoaded(sorted) {
+  seqIndex  = 0;
+  seqPlaying = false;
+  playPauseBtn.textContent = '▶';
+
+  // Filter out any frames that failed to decode
+  seqImages = seqImages.filter(Boolean);
+  if (seqImages.length === 0) { alert('No images could be loaded.'); return; }
+
+  const first = seqImages[0];
+  const w = first.naturalWidth;
+  const h = first.naturalHeight;
+  const maxDim = Math.max(w, h);
+
+  paddedCanvas = document.createElement('canvas');
+  paddedCanvas.width  = maxDim;
+  paddedCanvas.height = maxDim;
+  paddedCanvasCtx = paddedCanvas.getContext('2d');
+
+  if (videoTexture) videoTexture.dispose();
+  videoTexture = new THREE.CanvasTexture(paddedCanvas);
+  videoTexture.minFilter = THREE.LinearFilter;
+  videoTexture.magFilter = THREE.LinearFilter;
+  videoTexture.colorSpace = THREE.SRGBColorSpace;
+  videoTexture.wrapS = THREE.ClampToEdgeWrapping;
+  videoTexture.wrapT = THREE.ClampToEdgeWrapping;
+
+  buildSphere(videoTexture);
+  drawSeqFrame(0);
+  buildFisheyeUVs(Number(srcFovSlider.value));
+  targetAspect = getSelectedAspect();
+  resize();
+
+  sourceMonitor.innerHTML = '';
+  const imgEl = new Image();
+  imgEl.src = seqUrls[0];
+  imgEl.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+  sourceMonitor.appendChild(imgEl);
+
+  filenameLbl.textContent = `${seqImages.length} images`;
+  dropOverlay.classList.add('hidden');
+  canvas.style.pointerEvents = 'auto';
+  setTransportMode('sequence');
+  saveStillBtn.disabled = false;
+  updateExportBtnState();
+  updateSeqSeek();
 }
 
 // ─── Export: Still Image ────────────────────────────────────────────────
@@ -469,7 +727,15 @@ let markIn  = null;
 let markOut = null;
 
 function updateExportBtnState() {
-  // Enable export if: (1) both markers set and valid, OR (2) no markers set (full video)
+  if (sourceMode === 'sequence') {
+    exportAviBtn.disabled = seqImages.length === 0;
+    return;
+  }
+  if (sourceMode === 'image') {
+    exportAviBtn.disabled = true; // use Save Still instead
+    return;
+  }
+  // video mode
   const hasValidMarkers = markIn !== null && markOut !== null && markOut > markIn;
   const noMarkers = markIn === null && markOut === null;
   exportAviBtn.disabled = !(videoTexture && (hasValidMarkers || noMarkers));
@@ -570,7 +836,68 @@ function saveSettingsJSON() {
   URL.revokeObjectURL(url);
 }
 
+// ─── Export: AVI from image sequence ─────────────────────────────────────────
+async function exportSequenceToAvi() {
+  if (seqImages.length === 0) return;
+
+  const fps   = Number(exportFpsEl.value);
+  const gl    = renderer.getContext();
+  const w     = renderer.domElement.width;
+  const h     = renderer.domElement.height;
+  const total = seqImages.length;
+  const wasPlaying = seqPlaying;
+
+  seqPlaying = false;
+  exportAviBtn.disabled    = true;
+  exportAviBtn.textContent = 'Exporting...';
+
+  const bgrFrames = [];
+
+  try {
+    for (let i = 0; i < total; i++) {
+      seqIndex = i;
+      drawSeqFrame(i);
+      videoTexture.needsUpdate = true;
+      renderer.render(scene, camera);
+
+      const rgba = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      bgrFrames.push(rgbaToBGR(rgba, w, h));
+
+      exportBar.value          = Math.round(((i + 1) / total) * 100);
+      exportStatus.textContent = `Frame ${i + 1} / ${total}`;
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    exportStatus.textContent = 'Building AVI…';
+    await new Promise(r => setTimeout(r, 0));
+
+    const blob = encodeAVI(bgrFrames, w, h, fps);
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'unring-export.avi';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    saveSettingsJSON();
+    exportStatus.textContent = `Done — ${total} frames, ${(blob.size / 1e6).toFixed(1)} MB`;
+  } catch (err) {
+    exportStatus.textContent = 'Export failed: ' + err.message;
+    console.error(err);
+  } finally {
+    exportAviBtn.textContent = 'Export AVI (Uncompressed)';
+    updateExportBtnState();
+    if (wasPlaying) { seqPlaying = true; playPauseBtn.textContent = '⏸'; }
+  }
+}
+
 exportAviBtn.addEventListener('click', async () => {
+  if (sourceMode === 'sequence') {
+    await exportSequenceToAvi();
+    return;
+  }
+
   // Determine export range: use markers if set, otherwise full video
   let startTime, endTime;
   if (markIn !== null && markOut !== null && markOut > markIn) {
@@ -659,7 +986,20 @@ exportAviBtn.addEventListener('click', async () => {
 uploadBtn.addEventListener('click', () => fileInput.click());
 dropOpen.addEventListener('click',  () => fileInput.click());
 fileInput.addEventListener('change', () => {
-  if (fileInput.files.length) loadVideoFile(fileInput.files[0]);
+  const files = fileInput.files;
+  if (!files.length) { fileInput.value = ''; return; }
+  if (files.length > 1) {
+    if (Array.from(files).every(isImageFile)) {
+      loadImageSequence(files);
+    } else {
+      alert('When opening multiple files, all must be image files (for an image sequence).');
+    }
+  } else {
+    const file = files[0];
+    if (isVideoFile(file))      loadVideoFile(file);
+    else if (isImageFile(file)) loadImageFile(file);
+    else alert('Unsupported file type. Please use .mp4, .mov, .webm, or a common image format.');
+  }
   fileInput.value = '';
 });
 
@@ -697,8 +1037,7 @@ document.addEventListener('drop', (e) => {
   e.preventDefault();
   e.stopPropagation();
   document.body.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) loadVideoFile(file);
+  handleDroppedFiles(e.dataTransfer.files);
 });
 
 // Also listen on viewport specifically to handle drop events
@@ -712,6 +1051,306 @@ viewport.addEventListener('drop', (e) => {
   e.preventDefault();
   e.stopPropagation();
   document.body.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) loadVideoFile(file);
+  handleDroppedFiles(e.dataTransfer.files);
 });
+
+function handleDroppedFiles(files) {
+  if (!files || files.length === 0) return;
+  if (files.length > 1) {
+    if (Array.from(files).every(isImageFile)) {
+      loadImageSequence(files);
+    } else {
+      alert('When dropping multiple files, all must be image files (for an image sequence).');
+    }
+  } else {
+    const file = files[0];
+    if (isVideoFile(file))      loadVideoFile(file);
+    else if (isImageFile(file)) loadImageFile(file);
+    else alert('Unsupported file type. Please use .mp4, .mov, .webm, or a common image format.');
+  }
+}
+
+// ─── Overlay Tools ───────────────────────────────────────────────────────────
+const overlaySvg  = document.getElementById('overlay-svg');
+const toolsBtn    = document.getElementById('tools-btn');
+const toolsPanel  = document.getElementById('tools-panel');
+const toolLineBtn = document.getElementById('tool-line-btn');
+const toolGridBtn      = document.getElementById('tool-grid-btn');
+const lineColorInput   = document.getElementById('line-color');
+const gridColorInput   = document.getElementById('grid-color');
+const gridHCells  = document.getElementById('grid-h-cells');
+const gridVCells  = document.getElementById('grid-v-cells');
+
+let oTools    = [];   // [{id, type, ...data}]
+let oSelected = null; // id of selected tool
+let oMode     = null; // 'line' | 'grid' | null  (creation mode)
+let lineColor = '#facc15';
+let gridColor = '#22d3ee';
+lineColorInput.addEventListener('input', () => { lineColor = lineColorInput.value; });
+gridColorInput.addEventListener('input', () => { gridColor = gridColorInput.value; });
+let oDrag     = null; // active drag state
+let oIdCtr    = 0;
+
+// SVG namespace helper
+function ns(tag, attrs = {}) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+// ─── Panel toggle ─────────────────────────────────────────────────────────────
+toolsBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const open = toolsPanel.classList.toggle('hidden') === false;
+  toolsBtn.classList.toggle('panel-open', open);
+});
+const toolsCloseBtn = document.getElementById('tools-close-btn');
+toolsCloseBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  toolsPanel.classList.add('hidden');
+  toolsBtn.classList.remove('panel-open');
+});
+
+// ─── Creation mode ────────────────────────────────────────────────────────────
+function setOMode(mode) {
+  oMode = mode;
+  overlaySvg.style.pointerEvents = mode ? 'all' : 'none';
+  overlaySvg.style.cursor = mode ? 'crosshair' : '';
+  toolLineBtn.classList.toggle('active-mode', mode === 'line');
+  toolGridBtn.classList.toggle('active-mode', mode === 'grid');
+}
+
+toolLineBtn.addEventListener('click', () => setOMode(oMode === 'line' ? null : 'line'));
+toolGridBtn.addEventListener('click', () => setOMode(oMode === 'grid' ? null : 'grid'));
+
+// Press Escape to cancel creation mode
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && oMode) { setOMode(null); cStart = null; if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; } }
+});
+
+// ─── Creation drag (mousedown on the SVG background) ─────────────────────────
+let cStart = null; // {x, y}
+let cPrev  = null; // preview SVG element
+
+function svgPt(e) {
+  const r = overlaySvg.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+overlaySvg.addEventListener('mousedown', (e) => {
+  if (!oMode || e.target !== overlaySvg) return;
+  e.stopPropagation();
+  const p = svgPt(e);
+  cStart = p;
+  if (oMode === 'line') {
+    cPrev = ns('line', { x1: p.x, y1: p.y, x2: p.x, y2: p.y,
+      stroke: lineColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
+  } else {
+    cPrev = ns('rect', { x: p.x, y: p.y, width: 0, height: 0,
+      fill: 'none', stroke: gridColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
+  }
+  overlaySvg.appendChild(cPrev);
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (cStart && cPrev) {
+    const p = svgPt(e);
+    if (oMode === 'line') {
+      cPrev.setAttribute('x2', p.x);
+      cPrev.setAttribute('y2', p.y);
+    } else {
+      const x = Math.min(cStart.x, p.x), y = Math.min(cStart.y, p.y);
+      cPrev.setAttribute('x', x); cPrev.setAttribute('y', y);
+      cPrev.setAttribute('width',  Math.abs(p.x - cStart.x));
+      cPrev.setAttribute('height', Math.abs(p.y - cStart.y));
+    }
+  }
+  if (oDrag) handleODrag(e);
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (cStart) {
+    const p = svgPt(e);
+    if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; }
+    if (Math.hypot(p.x - cStart.x, p.y - cStart.y) > 8) {
+      if (oMode === 'line') {
+        addOLine(cStart.x, cStart.y, p.x, p.y);
+      } else {
+        addOGrid(Math.min(cStart.x, p.x), Math.min(cStart.y, p.y),
+                 Math.max(cStart.x, p.x), Math.max(cStart.y, p.y));
+      }
+    }
+    cStart = null;
+    setOMode(null);
+  }
+  if (oDrag) oDrag = null;
+});
+
+// ─── Drag handler ─────────────────────────────────────────────────────────────
+function handleODrag(e) {
+  const p    = svgPt(e);
+  const tool = oTools.find(t => t.id === oDrag.toolId);
+  if (!tool) return;
+  if (oDrag.kind === 'line-ep') {
+    if (oDrag.idx === 0) { tool.x1 = p.x; tool.y1 = p.y; }
+    else                  { tool.x2 = p.x; tool.y2 = p.y; }
+  } else if (oDrag.kind === 'corner') {
+    tool.corners[oDrag.idx] = { x: p.x, y: p.y };
+  }
+  renderOTool(tool);
+}
+
+// ─── Add tools ────────────────────────────────────────────────────────────────
+function addOLine(x1, y1, x2, y2) {
+  const tool = { id: ++oIdCtr, type: 'line', x1, y1, x2, y2, color: lineColor };
+  oTools.push(tool);
+  renderOTool(tool);
+  selectOTool(tool.id);
+}
+
+function addOGrid(x1, y1, x2, y2) {
+  const hC = Math.max(1, parseInt(gridHCells.value) || 4);
+  const vC = Math.max(1, parseInt(gridVCells.value) || 4);
+  const tool = { id: ++oIdCtr, type: 'grid', hCells: hC, vCells: vC, color: gridColor,
+    corners: [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }] };
+  oTools.push(tool);
+  renderOTool(tool);
+  selectOTool(tool.id);
+}
+
+// ─── Select / deselect / remove ───────────────────────────────────────────────
+function selectOTool(id) { oSelected = id; renderOAll(); }
+function deselectOAll()  { oSelected = null; renderOAll(); }
+function removeOTool(id) {
+  overlaySvg.querySelector(`[data-tid="${id}"]`)?.remove();
+  oTools = oTools.filter(t => t.id !== id);
+  if (oSelected === id) oSelected = null;
+}
+
+overlaySvg.addEventListener('click', (e) => { if (e.target === overlaySvg) deselectOAll(); });
+
+// ─── Render ───────────────────────────────────────────────────────────────────
+function renderOAll() {
+  overlaySvg.querySelectorAll('[data-tid]').forEach(el => el.remove());
+  oTools.forEach(renderOTool);
+}
+
+function renderOTool(tool) {
+  overlaySvg.querySelector(`[data-tid="${tool.id}"]`)?.remove();
+  if (tool.type === 'line') renderOLine(tool);
+  else                       renderOGrid(tool);
+}
+
+// ─── Line rendering ───────────────────────────────────────────────────────────
+function renderOLine(tool) {
+  const sel   = oSelected === tool.id;
+  const color = tool.color || '#facc15';
+  const g     = ns('g', { 'data-tid': tool.id });
+
+  // Thick transparent hit area
+  const hit = ns('line', { x1: tool.x1, y1: tool.y1, x2: tool.x2, y2: tool.y2,
+    stroke: 'transparent', 'stroke-width': 20, 'pointer-events': 'stroke', cursor: 'pointer' });
+  hit.addEventListener('click', (e) => { e.stopPropagation(); selectOTool(tool.id); });
+
+  // Visible line
+  const vis = ns('line', { x1: tool.x1, y1: tool.y1, x2: tool.x2, y2: tool.y2,
+    stroke: color, 'stroke-width': sel ? 2.5 : 1.5, 'pointer-events': 'none' });
+
+  g.appendChild(hit);
+  g.appendChild(vis);
+
+  // Endpoint handles
+  [[tool.x1, tool.y1, 0], [tool.x2, tool.y2, 1]].forEach(([cx, cy, idx]) => {
+    const ep = ns('circle', { cx, cy, r: 6, fill: color,
+      stroke: '#1a1a1a', 'stroke-width': 1.5, cursor: 'move', 'pointer-events': 'all' });
+    ep.addEventListener('mousedown', (e) => { e.stopPropagation(); oDrag = { kind: 'line-ep', toolId: tool.id, idx }; });
+    g.appendChild(ep);
+  });
+
+  // Remove button (perpendicular offset from midpoint)
+  if (sel) {
+    const mx = (tool.x1 + tool.x2) / 2, my = (tool.y1 + tool.y2) / 2;
+    const dx = tool.x2 - tool.x1,       dy = tool.y2 - tool.y1;
+    const len = Math.hypot(dx, dy) || 1;
+    const bx = mx + (-dy / len) * 24, by = my + (dx / len) * 24;
+    g.appendChild(makeORemoveBtn(bx, by, tool.id));
+  }
+
+  overlaySvg.appendChild(g);
+}
+
+// ─── Grid rendering ───────────────────────────────────────────────────────────
+function renderOGrid(tool) {
+  const sel             = oSelected === tool.id;
+  const color           = tool.color || '#22d3ee';
+  const [tl, tr, br, bl] = tool.corners;
+  const { hCells, vCells } = tool;
+  const g               = ns('g', { 'data-tid': tool.id });
+
+  // Build bilinear grid path
+  let d = '';
+  for (let row = 0; row <= vCells; row++) {
+    const v = row / vCells;
+    for (let col = 0; col <= hCells; col++) {
+      const p = bilerp(tl, tr, br, bl, col / hCells, v);
+      d += col === 0 ? `M${p.x.toFixed(1)},${p.y.toFixed(1)}` : `L${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+    }
+  }
+  for (let col = 0; col <= hCells; col++) {
+    const u = col / hCells;
+    for (let row = 0; row <= vCells; row++) {
+      const p = bilerp(tl, tr, br, bl, u, row / vCells);
+      d += row === 0 ? `M${p.x.toFixed(1)},${p.y.toFixed(1)}` : `L${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+    }
+  }
+
+  const grid = ns('path', { d, fill: 'none',
+    stroke: color, 'stroke-width': sel ? 1.5 : 1, opacity: 0.9, 'pointer-events': 'none' });
+
+  // Invisible border for hit-testing
+  const border = `M${tl.x},${tl.y} L${tr.x},${tr.y} L${br.x},${br.y} L${bl.x},${bl.y} Z`;
+  const hitBorder = ns('path', { d: border, fill: 'none',
+    stroke: 'transparent', 'stroke-width': 18, 'pointer-events': 'stroke', cursor: 'pointer' });
+  hitBorder.addEventListener('click', (e) => { e.stopPropagation(); selectOTool(tool.id); });
+
+  g.appendChild(grid);
+  g.appendChild(hitBorder);
+
+  // Corner handles
+  tool.corners.forEach((c, idx) => {
+    const ep = ns('circle', { cx: c.x, cy: c.y, r: 6,
+      fill: color, stroke: '#1a1a1a', 'stroke-width': 1.5,
+      cursor: 'move', 'pointer-events': 'all' });
+    ep.addEventListener('mousedown', (e) => { e.stopPropagation(); oDrag = { kind: 'corner', toolId: tool.id, idx }; });
+    g.appendChild(ep);
+  });
+
+  // Remove button at centroid
+  if (sel) {
+    const cx = tool.corners.reduce((s, c) => s + c.x, 0) / 4;
+    const cy = tool.corners.reduce((s, c) => s + c.y, 0) / 4;
+    g.appendChild(makeORemoveBtn(cx, cy, tool.id));
+  }
+
+  overlaySvg.appendChild(g);
+}
+
+// ─── Bilinear interpolation ───────────────────────────────────────────────────
+function bilerp(tl, tr, br, bl, u, v) {
+  return {
+    x: (1-u)*(1-v)*tl.x + u*(1-v)*tr.x + u*v*br.x + (1-u)*v*bl.x,
+    y: (1-u)*(1-v)*tl.y + u*(1-v)*tr.y + u*v*br.y + (1-u)*v*bl.y,
+  };
+}
+
+// ─── Remove button ────────────────────────────────────────────────────────────
+function makeORemoveBtn(cx, cy, toolId) {
+  const g = ns('g', { cursor: 'pointer', 'pointer-events': 'all' });
+  g.appendChild(ns('circle', { cx, cy, r: 10, fill: '#ef4444', stroke: '#fff', 'stroke-width': 1.5 }));
+  const txt = ns('text', { x: cx, y: cy, 'text-anchor': 'middle', 'dominant-baseline': 'central',
+    fill: '#fff', 'font-size': '13', 'font-weight': 'bold', 'pointer-events': 'none' });
+  txt.textContent = '✕';
+  g.appendChild(txt);
+  g.addEventListener('click', (e) => { e.stopPropagation(); removeOTool(toolId); });
+  return g;
+}
