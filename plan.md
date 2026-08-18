@@ -1,69 +1,115 @@
-# plan.md: unRing Project Specification
+# unRing Image-Only Export Plan
 
-**Project Name:** unRing  
-**Objective:** A web-based utility to correct fisheye lens distortion from doorbell cameras using Three.js spherical projection.
+**Objective:** Replace video-file output with corrected still images. Support a
+single image input and numbered image sequences as input, with one numbered
+corrected image per input frame as output.
 
----
+## Product Contract
 
-## 1. Project Overview
-unRing solves the "edge-of-frame" distortion common in wide-angle security footage. By projecting the video onto the interior of a virtual 3D hemisphere and using a rectilinear virtual camera, users can "look around" the footage and extract undistorted views of subjects.
+- Accepted inputs: common raster images (`jpg`, `jpeg`, `png`, `webp`, `gif`,
+  `bmp`, and `tiff` where the browser supports decoding), either one file or
+  multiple files selected/dropped together.
+- A single image produces one downloadable corrected PNG.
+- A sequence produces one corrected PNG per source image. Output names use a
+  stable zero-padded frame number, for example `unring-0001.png`,
+  `unring-0002.png`.
+- Sequence order is determined by natural numeric filename sorting, with the
+  original file order used only as a tie-breaker. The displayed sequence must
+  use the same order as export.
+- No video input, video playback, video markers, audio controls, AVI encoder,
+  `MediaRecorder`, or video output remains in the image-only workflow.
+- Export uses the current lens, camera, aspect-ratio, and overlay settings for
+  every output image.
 
-## 2. Technical Stack
-* **3D Engine:** Three.js (WebGL)
-* **Interface:** HTML5 / CSS3 / Vanilla JavaScript
-* **Video Input:** HTML5 Video API + `THREE.VideoTexture`
-* **Video Export:** MediaRecorder API + `canvas.captureStream()`
+## Implementation Steps
 
----
+### 1. Consolidate Image Source State
 
-## 3. Core Mathematical Logic: The "Virtual VR Rig"
-Instead of complex 2D image warping, we use a 3D geometry approach:
-1.  **The Projection:** Video is mapped as a texture onto a `SphereGeometry`.
-2.  **Inversion:** The geometry is inverted (Normals flipped or Scale Z = -1) so the camera sees the texture from the inside.
-3.  **The View:** A `PerspectiveCamera` is placed at the origin $(0, 0, 0)$. 
-4.  **The Correction:** By adjusting the `camera.fov` (Field of View) and rotating the camera, the spherical distortion is naturally neutralized into a rectilinear (flat) perspective.
+- Keep the existing Three.js fisheye projection and canvas-texture path.
+- Make `image` and `sequence` the only source modes; remove video-specific
+  state, event listeners, FPS detection, and padded-video drawing code.
+- Extract shared frame preparation into one helper that centers an image on the
+  square texture canvas, updates the texture, and applies the source aspect.
+- Validate that all sequence frames decode and have compatible dimensions;
+  report failed files instead of silently shifting the sequence.
+- Revoke every object URL when replacing or clearing a source.
 
----
+### 2. Update Input and Sequence Rules
 
-## 4. Development Phases
+- Remove video MIME types and extensions from the file picker, drop handling,
+  validation, and instructional text.
+- Keep single-image loading and multiple-image loading as separate paths.
+- Sort sequence files once at load time using natural numeric ordering and keep
+  the sorted file metadata alongside the decoded images.
+- Show frame count and the current frame number in the source label and
+  transport area.
+- Retain play/pause and seek for sequences only, using a documented default
+  sequence rate for preview. Preview playback rate must not affect output
+  naming or frame count.
 
-### Phase 1: Environment & Media Pipeline
-* [ ] Initialize Three.js scene (No lighting, `MeshBasicMaterial` only).
-* [ ] Implement file uploader for `.mp4`, `.mov`, and `.webm`.
-* [ ] Map video file to a `THREE.VideoTexture`.
-* [ ] Create a high-density `SphereGeometry` (min 128x128 segments) and apply the video texture to the interior.
+### 3. Replace Video Export with Image Export
 
-### Phase 2: Calibration & Interaction
-* [ ] **Projection Alignment:** Adjust UV mapping so a 180° fisheye covers exactly half the sphere.
-* [ ] **Virtual Controls:** Implement mouse/touch "drag-to-look" functionality to rotate the camera.
-* [ ] **Lens Tuning:** Create sliders for:
-    * **Source FOV:** Calibrate for 140° vs 180° vs 200° lenses.
-    * **Virtual Zoom:** Change the `PerspectiveCamera.fov`.
-    * **Roll/Tilt:** Correct for cameras mounted at odd angles.
+- Rename the export control and functions from AVI/video terminology to image
+  sequence terminology.
+- Implement a shared `renderCurrentFrame()` routine that renders the current
+  Three.js scene at the configured export dimensions and returns a PNG blob.
+- Single-image export renders once and downloads `unring.png` (or a filename
+  derived from the source image).
+- Sequence export iterates the sorted decoded frames, renders each one, and
+  downloads numbered PNG files with enough zero padding for the sequence count.
+- Use the browser download mechanism for each PNG. If browser download
+  throttling becomes a problem for large sequences, add a ZIP option using a
+  maintained archive library rather than reintroducing a video container.
+- Preserve export progress, cancellation/disabled state, and settings export;
+  restore the selected frame after export completes.
+- Delete `avi-writer.js` and its import once no code references it.
 
-### Phase 3: User Interface (unRing Dashboard)
-* [ ] **Main Viewport:** Large WebGL canvas showing the corrected view.
-* [ ] **Source Monitor:** Small 2D thumbnail of the raw, distorted footage for reference.
-* [ ] **Transport Controls:** Play, Pause, Seek, and Volume.
-* [ ] **Aspect Ratio Presets:** 1:1 (Ring), 4:3, and 16:9 toggles.
+### 4. Simplify the Interface
 
-### Phase 4: Recording & Export
-* [ ] Implement `MediaRecorder` logic to capture the WebGL canvas.
-* [ ] Synchronize the start of the source video with the start of the recorder.
-* [ ] Output a downloadable `.webm` or `.mp4` file of the corrected viewpoint.
+- Replace the Export section's AVI button and video marker controls with:
+  `Save Image` for a single source and `Export Image Sequence` for multiple
+  images.
+- Hide or remove volume and time-based video controls. Sequence controls should
+  show frame position rather than seconds.
+- Change labels, empty states, file filters, and error messages to describe
+  images only.
+- Keep the raw source monitor and corrected WebGL preview synchronized with the
+  selected image.
 
----
+### 5. Align the Python Edition
 
-## 5. Technical Challenges & Mitigations
-| Challenge | Mitigation |
-| :--- | :--- |
-| **Jagged Edges** | Use high-segment count spheres and `LinearFilter` on textures. |
-| **Resolution Loss** | Provide a "High Quality" render mode that increases the canvas size during export. |
-| **Performance** | Only update the `VideoTexture` on `requestAnimationFrame` when the video is playing. |
+- Replace `cv2.VideoCapture` input with `cv2.imread` for one image and a sorted
+  list of image paths for sequences.
+- Reuse the existing remap construction and `undistort_frame` for each image.
+- Replace `cv2.VideoWriter` and the video export worker with numbered image
+  writes using `cv2.imwrite`, including output-directory creation and progress.
+- Update the Python CLI flags, GUI labels, file dialogs, status text, and help
+  examples so they no longer promise video processing.
+- Define whether Python outputs PNG only or preserves a chosen image format;
+  default to PNG for consistent lossless export.
 
----
+## Validation Plan
 
-## 6. Success Criteria
-* Users can upload a Ring doorbell clip.
-* Users can pan the view to an edge-distorted person and see them "flattened."
-* Users can export a 10-second corrected clip of that person.
+- Browser build passes with no references to video input, AVI, or
+  `MediaRecorder`.
+- Load one JPEG and verify the preview, raw monitor, settings, and one PNG
+  download.
+- Load a deliberately mixed-name sequence such as `frame2.png`,
+  `frame10.png`, and `frame01.png`; verify natural order, frame count, and
+  output names.
+- Verify every exported sequence image has the same dimensions, correct
+  orientation, and the active camera/lens settings.
+- Verify replacing a source does not display stale frames or leak object URLs.
+- Verify unsupported files and partially undecodable sequences produce a clear
+  error and do not enable export.
+- Run Python image and sequence tests for dimensions, ordering, output count,
+  and cancellation/error handling after the Python edition is migrated.
+
+## Completion Criteria
+
+- The application accepts only single images or numbered image sequences.
+- A single input exports one corrected PNG.
+- A sequence exports exactly one correctly numbered PNG for each valid input
+  image, in natural numeric order.
+- No video output code, UI, documentation, or dependency remains on the active
+  image-only path.

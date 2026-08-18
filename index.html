@@ -481,7 +481,7 @@
     <h1>unRing</h1>
     <button id="upload-btn">Open File</button>
     <button class="header-btn" id="import-settings-btn">Import Settings</button>
-    <input type="file" id="file-input" accept="video/mp4,video/quicktime,video/webm,video/avi,video/x-msvideo,.mp4,.mov,.webm,.avi,image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif" multiple />
+    <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif" multiple />
     <input type="file" id="settings-input" accept=".json" style="display:none;" />
     <span id="filename">No file loaded</span>
     <button id="tools-btn">⊕ Tools</button>
@@ -520,7 +520,7 @@
           <path d="M12 8v8M8 12l4-4 4 4"/>
         </svg>
         <p>Drop a file here, or <span id="drop-open">click to open</span></p>
-        <p style="font-size:0.78rem; color:#444;">.mp4 &nbsp;·&nbsp; .mov &nbsp;·&nbsp; .webm &nbsp;·&nbsp; .avi &nbsp;·&nbsp; .jpg &nbsp;·&nbsp; .png &nbsp;·&nbsp; .webp &nbsp;(or multiple images as a sequence)</p>
+        <p style="font-size:0.78rem; color:#444;">.jpg &nbsp;·&nbsp; .png &nbsp;·&nbsp; .webp &nbsp;·&nbsp; .gif &nbsp;(or multiple images as a sequence)</p>
       </div>
 
       <div id="transport">
@@ -583,18 +583,10 @@
       <div class="sidebar-section">
         <h2>Export</h2>
 
-        <button class="full-btn" id="save-still-btn" disabled>Save Still (PNG)</button>
+        <button class="full-btn primary" id="save-still-btn" disabled>Save Image (PNG)</button>
+        <button class="full-btn" id="export-sequence-btn" disabled>Export Image Sequence</button>
 
-        <div class="marker-grid">
-          <button id="mark-in-btn">&#9664; Mark In</button>
-          <span id="mark-in-time" class="marker-time">—</span>
-          <button id="mark-out-btn">Mark Out &#9654;</button>
-          <span id="mark-out-time" class="marker-time">—</span>
-        </div>
-
-        <button class="full-btn primary" id="export-avi-btn" disabled>Export AVI (Uncompressed)</button>
-
-        <div id="export-progress" style="display:none;">
+        <div id="export-progress" hidden>
           <progress id="export-bar" max="100" value="0"></progress>
           <span id="export-status"></span>
         </div>
@@ -602,9 +594,6 @@
 
     </aside>
   </div>
-
-  <!-- hidden video element used as texture source -->
-  <video id="video" loop crossorigin="anonymous" style="display:none" playsinline></video>
 
   <script type="module" src="main.js"></script>
 </body>

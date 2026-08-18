@@ -126,31 +126,21 @@ def undistort_frame(frame: np.ndarray,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Video helpers
+# Image helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def open_video(path: str) -> cv2.VideoCapture:
-    """Open a video file and raise if it fails."""
-    cap = cv2.VideoCapture(path)
-    if not cap.isOpened():
-        raise IOError(f"Cannot open video: {path}")
-    return cap
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 
 
-def read_frame(cap: cv2.VideoCapture, frame_index: int = 0) -> np.ndarray:
-    """Seek to frame_index and return that frame as a BGR ndarray."""
-    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-    ok, frame = cap.read()
-    if not ok:
-        raise IOError(f"Could not read frame {frame_index} from video.")
-    return frame
+def open_image(path: str) -> np.ndarray:
+    """Read one image as a BGR ndarray and raise if decoding fails."""
+    image = cv2.imread(path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise IOError(f"Cannot decode image: {path}")
+    return image
 
 
-def video_info(cap: cv2.VideoCapture) -> dict:
-    """Return a dict of basic video metadata."""
-    return {
-        "width":  int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-        "fps":    cap.get(cv2.CAP_PROP_FPS),
-        "frames": int(cap.get(cv2.CAP_PROP_FRAME_COUNT)),
-    }
+def image_info(image: np.ndarray) -> dict:
+    """Return basic image metadata in the same shape used by the remap code."""
+    height, width = image.shape[:2]
+    return {"width": width, "height": height}

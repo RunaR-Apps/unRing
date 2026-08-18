@@ -1,9 +1,7 @@
 import * as THREE from 'three';
-import { encodeAVI } from './avi-writer.js';
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const canvas        = document.getElementById('canvas');
-const video         = document.getElementById('video');
 const fileInput     = document.getElementById('file-input');
 const uploadBtn     = document.getElementById('upload-btn');
 const dropOpen      = document.getElementById('drop-open');
@@ -13,10 +11,7 @@ const viewport      = document.getElementById('viewport');
 const sourceMonitor = document.getElementById('source-monitor');
 const playPauseBtn  = document.getElementById('play-pause-btn');
 const seekSlider    = document.getElementById('seek');
-const markInMarker  = document.getElementById('mark-in-marker');
-const markOutMarker = document.getElementById('mark-out-marker');
 const timeLabel     = document.getElementById('time-label');
-const volSlider     = document.getElementById('vol-slider');
 const srcFovSlider  = document.getElementById('src-fov');
 const srcFovVal     = document.getElementById('src-fov-val');
 const zoomSlider    = document.getElementById('zoom');
@@ -29,26 +24,13 @@ const rollSlider    = document.getElementById('roll');
 const rollVal       = document.getElementById('roll-val');
 // Export
 const saveStillBtn  = document.getElementById('save-still-btn');
-const markInBtn     = document.getElementById('mark-in-btn');
-const markOutBtn    = document.getElementById('mark-out-btn');
-const markInTime    = document.getElementById('mark-in-time');
-const markOutTime   = document.getElementById('mark-out-time');
-const exportAviBtn  = document.getElementById('export-avi-btn');
+const exportSequenceBtn = document.getElementById('export-sequence-btn');
 const exportProgress = document.getElementById('export-progress');
 const exportBar     = document.getElementById('export-bar');
 const exportStatus  = document.getElementById('export-status');
 const importSettingsBtn = document.getElementById('import-settings-btn');
 const settingsInput = document.getElementById('settings-input');
 
-const VIDEO_MIME_TYPES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
-  'video/avi',
-  'video/x-msvideo',
-  'video/msvideo'
-];
-const VIDEO_EXT_RE = /\.(mp4|mov|webm|avi)$/i;
 const DEFAULT_FPS = 25;
 
 // ─── Three.js setup ──────────────────────────────────────────────────────────
@@ -66,15 +48,15 @@ camera.position.set(0, 0, 0);
 const geometry = new THREE.SphereGeometry(10, 128, 128);
 geometry.scale(-1, 1, 1);
 
-let videoTexture = null;
+let imageTexture = null;
 let sphereMesh   = null;
 
-// Padded canvas for non-square videos (1:1 aspect with black borders)
+// Square texture canvas keeps the circular fisheye image aspect-correct.
 let paddedCanvas = null;
 let paddedCanvasCtx = null;
 
 // ─── Source mode ──────────────────────────────────────────────────────────────
-// 'none' | 'video' | 'image' | 'sequence'
+// 'none' | 'image' | 'sequence'
 let sourceMode = 'none';
 
 // Image / image-sequence state
@@ -83,11 +65,7 @@ let seqImages  = [];   // HTMLImageElement array (one per frame)
 let seqIndex   = 0;    // current frame index (0-based)
 let seqPlaying = false;
 let seqLastMs  = 0;    // timestamp of last frame advance (ms)
-let sourceVideoFps = DEFAULT_FPS;
-
-function getActiveFps() {
-  return sourceMode === 'video' ? sourceVideoFps : DEFAULT_FPS;
-}
+let sourceName = '';
 
 function buildSphere(tex) {
   if (sphereMesh) {
@@ -226,20 +204,8 @@ canvas.addEventListener('touchmove', (e) => {
 // ─── Animation loop ──────────────────────────────────────────────────────────
 function tick(ts) {
   requestAnimationFrame(tick);
-  if (sourceMode === 'video' && videoTexture && paddedCanvas && !video.paused && !video.ended) {
-    // Update padded canvas with current video frame
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    const maxDim = Math.max(w, h);
-    paddedCanvasCtx.fillStyle = '#000000';
-    paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-    const x = (maxDim - w) / 2;
-    const y = (maxDim - h) / 2;
-    paddedCanvasCtx.drawImage(video, x, y, w, h);
-    videoTexture.needsUpdate = true;
-    updateSeek();
-  } else if (sourceMode === 'sequence' && seqPlaying && seqImages.length > 0) {
-    const fps = getActiveFps();
+  if (sourceMode === 'sequence' && seqPlaying && seqImages.length > 0) {
+    const fps = DEFAULT_FPS;
     if (ts - seqLastMs >= 1000 / fps) {
       seqLastMs = ts;
       seqIndex = (seqIndex + 1) % seqImages.length;
@@ -347,67 +313,15 @@ document.addEventListener('keydown', (e) => {
     seqPlaying = !seqPlaying;
     playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
     seqLastMs = 0;
-  } else if (sourceMode === 'video') {
-    if (video.paused) { video.play(); }
-    else              { video.pause(); }
   }
 });
 
 // ─── Transport controls ───────────────────────────────────────────────────────
-function formatTime(s) {
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60).toString().padStart(2, '0');
-  return `${m}:${sec}`;
-}
-
-function updateSeek() {
-  if (!video.duration) return;
-  const pct = video.currentTime / video.duration;
-  seekSlider.value = Math.round(pct * 1000);
-  timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-  updateScrubMarkers();
-}
-
-function updateScrubMarkers() {
-  if (!video.duration) return;
-  const positionMarker = (marker, time) => {
-    if (time === null || time < 0 || time > video.duration) {
-      marker.classList.remove('visible');
-      return;
-    }
-    marker.style.left = `${(time / video.duration) * 100}%`;
-    marker.classList.add('visible');
-  };
-
-  positionMarker(markInMarker, markIn);
-  positionMarker(markOutMarker, markOut);
-}
-
 playPauseBtn.addEventListener('click', () => {
-  if (sourceMode === 'sequence') {
-    seqPlaying = !seqPlaying;
-    playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
-    seqLastMs = 0; // reset so first advance waits a full interval
-  } else {
-    if (video.paused) { video.play(); }
-    else              { video.pause(); }
-  }
-});
-
-video.addEventListener('play',  () => { playPauseBtn.textContent = '⏸'; });
-video.addEventListener('pause', () => { playPauseBtn.textContent = '▶'; });
-video.addEventListener('ended', () => { playPauseBtn.textContent = '▶'; });
-
-// Update the processed (main) view when seeking while paused.
-video.addEventListener('seeked', () => {
-  if (sourceMode !== 'video' || !videoTexture || !paddedCanvas || !video.paused) return;
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  const maxDim = Math.max(w, h);
-  paddedCanvasCtx.fillStyle = '#000000';
-  paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-  paddedCanvasCtx.drawImage(video, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
-  videoTexture.needsUpdate = true;
+  if (sourceMode !== 'sequence') return;
+  seqPlaying = !seqPlaying;
+  playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
+  seqLastMs = 0; // reset so first advance waits a full interval
 });
 
 seekSlider.addEventListener('input', () => {
@@ -415,150 +329,21 @@ seekSlider.addEventListener('input', () => {
     const idx = Math.round((seekSlider.value / 1000) * (seqImages.length - 1));
     seqIndex = Math.max(0, Math.min(seqImages.length - 1, idx));
     drawSeqFrame(seqIndex);
-    timeLabel.textContent = `Frame ${seqIndex + 1} / ${seqImages.length}`;
-    const imgEl = sourceMonitor.querySelector('img');
-    if (imgEl && seqUrls[seqIndex]) imgEl.src = seqUrls[seqIndex];
-  } else {
-    if (!video.duration) return;
-    video.currentTime = (seekSlider.value / 1000) * video.duration;
+    updateSeqSeek();
   }
 });
 
-video.volume = 0;
-
-volSlider.addEventListener('input', () => {
-  video.volume = Number(volSlider.value);
-});
-
-// ─── File loading ─────────────────────────────────────────────────────────────
-function loadVideoFile(file) {
-  if (!VIDEO_MIME_TYPES.includes(file.type) && !VIDEO_EXT_RE.test(file.name)) {
-    alert('Unsupported file type. Please use .mp4, .mov, .webm, or .avi.');
-    return;
-  }
-
-  sourceMode = 'video';
-  cleanupSeq();
-
-  if (video.src) URL.revokeObjectURL(video.src);
-
-  video.src = URL.createObjectURL(file);
-  video.onerror = () => {
-    alert('This video file could not be decoded by your browser. If this is an AVI file, convert it to H.264 .mp4 first.');
-  };
-  video.load();
-
-  video.addEventListener('canplay', onCanPlay, { once: true });
-
-  filenameLbl.textContent = file.name;
-  dropOverlay.classList.add('hidden');
-  canvas.style.pointerEvents = 'auto'; // Re-enable canvas interaction when video loads
-}
-
-function onCanPlay() {
-  if (videoTexture) videoTexture.dispose();
-
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  const maxDim = Math.max(vw, vh);
-
-  // Create or resize padded canvas to 1:1 aspect
-  if (!paddedCanvas || paddedCanvas.width !== maxDim) {
-    paddedCanvas = document.createElement('canvas');
-    paddedCanvas.width = maxDim;
-    paddedCanvas.height = maxDim;
-    paddedCanvasCtx = paddedCanvas.getContext('2d');
-  }
-
-  // Draw video centered with black padding on square canvas
-  paddedCanvasCtx.fillStyle = '#000000';
-  paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-  const x = (maxDim - vw) / 2;
-  const y = (maxDim - vh) / 2;
-  paddedCanvasCtx.drawImage(video, x, y, vw, vh);
-
-  // Use canvas texture instead of video texture for proper 1:1 aspect padding
-  videoTexture = new THREE.CanvasTexture(paddedCanvas);
-  videoTexture.minFilter = THREE.LinearFilter;
-  videoTexture.magFilter = THREE.LinearFilter;
-  videoTexture.colorSpace = THREE.SRGBColorSpace;
-
-  buildSphere(videoTexture);
-
-  // Clamp so out-of-circle vertices sample the black border, not wrap-around.
-  videoTexture.wrapS = THREE.ClampToEdgeWrapping;
-  videoTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-  // Auto-detect output aspect from incoming video dimensions.
-  setAspectFromDimensions(vw, vh);
-
-  // UV bake is already applied to the geometry; re-bake in case FOV changed.
-  buildFisheyeUVs(Number(srcFovSlider.value));
-
-  // Mirror video into source monitor
-  sourceMonitor.innerHTML = '';
-  const mirrorVid = video.cloneNode(false);
-  mirrorVid.style.cssText = 'width:100%;height:100%;object-fit:contain;';
-  mirrorVid.src = video.src;
-  mirrorVid.currentTime = video.currentTime;
-  mirrorVid.muted = true;
-  mirrorVid.autoplay = false;
-  // Sync mirror with main video
-  video.addEventListener('play',  () => mirrorVid.play());
-  video.addEventListener('pause', () => mirrorVid.pause());
-  video.addEventListener('seeked', () => { mirrorVid.currentTime = video.currentTime; });
-  sourceMonitor.appendChild(mirrorVid);
-
-  // Don't autoplay — show first frame, wait for user to press play
-  video.pause();
-
-  // The browser may not have decoded the first frame yet at canplay time, so
-  // the drawImage above can produce a blank canvas.  Schedule a redraw after
-  // two animation frames to guarantee the decoded frame is copied into the
-  // padded canvas and the Three.js texture is updated.
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (sourceMode !== 'video' || !videoTexture || !paddedCanvas) return;
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    const maxDim = Math.max(w, h);
-    paddedCanvasCtx.fillStyle = '#000000';
-    paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-    paddedCanvasCtx.drawImage(video, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
-    videoTexture.needsUpdate = true;
-  }));
-
-  setTransportMode('video');
-
-  // Update seek bar range now we know duration
-  video.addEventListener('loadedmetadata', updateSeek);
-  updateSeek();
-
-  // Enable export controls now that a video is loaded
-  saveStillBtn.disabled = false;
-  updateExportBtnState();
-
-  // Auto-detect source fps and use it for export.
-  detectVideoFps(video).then(fps => {
-    sourceVideoFps = fps;
-  });
-}
-
-// ─── File type helpers ────────────────────────────────────────────────────────
-function isVideoFile(file) {
-  return VIDEO_EXT_RE.test(file.name) || VIDEO_MIME_TYPES.includes(file.type);
-}
-
+// ─── Image loading ───────────────────────────────────────────────────────────
 function isImageFile(file) {
   return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(file.name) ||
     file.type.startsWith('image/');
 }
 
-// ─── Image / sequence helpers ─────────────────────────────────────────────────
 function cleanupSeq() {
-  seqUrls.forEach(u => URL.revokeObjectURL(u));
-  seqUrls   = [];
+  seqUrls.forEach(url => URL.revokeObjectURL(url));
+  seqUrls = [];
   seqImages = [];
-  seqIndex  = 0;
+  seqIndex = 0;
   seqPlaying = false;
 }
 
@@ -570,14 +355,14 @@ function drawSeqFrame(index) {
   const maxDim = Math.max(w, h);
   if (!paddedCanvas || paddedCanvas.width !== maxDim) {
     paddedCanvas = document.createElement('canvas');
-    paddedCanvas.width  = maxDim;
+    paddedCanvas.width = maxDim;
     paddedCanvas.height = maxDim;
     paddedCanvasCtx = paddedCanvas.getContext('2d');
   }
   paddedCanvasCtx.fillStyle = '#000000';
   paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
   paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
-  if (videoTexture) videoTexture.needsUpdate = true;
+  if (imageTexture) imageTexture.needsUpdate = true;
 }
 
 function updateSeqSeek() {
@@ -588,118 +373,97 @@ function updateSeqSeek() {
   if (imgEl && seqUrls[seqIndex]) imgEl.src = seqUrls[seqIndex];
 }
 
-// Show/hide transport controls based on source mode.
 function setTransportMode(mode) {
   const volRow = document.getElementById('volume-row');
-  if (mode === 'video') {
-    playPauseBtn.style.display = '';
-    seekSlider.style.display   = '';
-    timeLabel.style.display    = '';
-    volRow.style.display       = '';
-  } else if (mode === 'image') {
-    playPauseBtn.style.display = 'none';
-    seekSlider.style.display   = 'none';
-    timeLabel.style.display    = 'none';
-    volRow.style.display       = 'none';
-  } else if (mode === 'sequence') {
-    playPauseBtn.style.display = '';
-    seekSlider.style.display   = '';
-    timeLabel.style.display    = '';
-    volRow.style.display       = 'none';
-  }
+  const sequence = mode === 'sequence';
+  playPauseBtn.style.display = sequence ? '' : 'none';
+  seekSlider.style.display = sequence ? '' : 'none';
+  timeLabel.style.display = sequence ? '' : 'none';
+  volRow.style.display = 'none';
 }
 
-// ─── Image file loading ───────────────────────────────────────────────────────
 function loadImageFile(file) {
   sourceMode = 'image';
-  sourceVideoFps = DEFAULT_FPS;
+  sourceName = file.name;
   cleanupSeq();
-  if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
-
   const url = URL.createObjectURL(file);
   seqUrls.push(url);
   const img = new Image();
   img.onload = () => {
+    seqImages = [img];
     const w = img.naturalWidth;
     const h = img.naturalHeight;
     const maxDim = Math.max(w, h);
-
     paddedCanvas = document.createElement('canvas');
-    paddedCanvas.width  = maxDim;
+    paddedCanvas.width = maxDim;
     paddedCanvas.height = maxDim;
     paddedCanvasCtx = paddedCanvas.getContext('2d');
-    paddedCanvasCtx.fillStyle = '#000';
-    paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-    paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
-
-    if (videoTexture) videoTexture.dispose();
-    videoTexture = new THREE.CanvasTexture(paddedCanvas);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-    videoTexture.colorSpace = THREE.SRGBColorSpace;
-    videoTexture.wrapS = THREE.ClampToEdgeWrapping;
-    videoTexture.wrapT = THREE.ClampToEdgeWrapping;
-
-    buildSphere(videoTexture);
+    if (imageTexture) imageTexture.dispose();
+    imageTexture = new THREE.CanvasTexture(paddedCanvas);
+    imageTexture.minFilter = THREE.LinearFilter;
+    imageTexture.magFilter = THREE.LinearFilter;
+    imageTexture.colorSpace = THREE.SRGBColorSpace;
+    imageTexture.wrapS = THREE.ClampToEdgeWrapping;
+    imageTexture.wrapT = THREE.ClampToEdgeWrapping;
+    buildSphere(imageTexture);
+    drawSeqFrame(0);
     buildFisheyeUVs(Number(srcFovSlider.value));
     setAspectFromDimensions(w, h);
-
     sourceMonitor.innerHTML = '';
     const imgEl = new Image();
     imgEl.src = url;
     imgEl.style.cssText = 'width:100%;height:100%;object-fit:contain;';
     sourceMonitor.appendChild(imgEl);
-
     filenameLbl.textContent = file.name;
     dropOverlay.classList.add('hidden');
     canvas.style.pointerEvents = 'auto';
     setTransportMode('image');
-    saveStillBtn.disabled = false;
     updateExportBtnState();
   };
   img.onerror = () => alert('Failed to load image: ' + file.name);
   img.src = url;
 }
 
-// ─── Image sequence loading ───────────────────────────────────────────────────
 function loadImageSequence(files) {
   sourceMode = 'sequence';
-  sourceVideoFps = DEFAULT_FPS;
+  sourceName = Array.from(files)[0]?.name || 'sequence';
   cleanupSeq();
-  if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
-
-  // Sort numerically/alphabetically by filename
   const sorted = Array.from(files).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   );
-
   let loaded = 0;
+  let failed = 0;
   seqImages = new Array(sorted.length);
-  sorted.forEach((file, i) => {
+  sorted.forEach((file, index) => {
     const url = URL.createObjectURL(file);
     seqUrls.push(url);
     const img = new Image();
     img.onload = () => {
-      seqImages[i] = img;
+      seqImages[index] = img;
       loaded++;
-      if (loaded === sorted.length) onSeqLoaded(sorted);
+      if (loaded === sorted.length) onSeqLoaded(failed);
     };
     img.onerror = () => {
+      failed++;
       loaded++;
-      if (loaded === sorted.length) onSeqLoaded(sorted);
+      if (loaded === sorted.length) onSeqLoaded(failed);
     };
     img.src = url;
   });
 }
 
-function onSeqLoaded(sorted) {
+function onSeqLoaded(failed) {
   seqIndex  = 0;
   seqPlaying = false;
   playPauseBtn.textContent = '▶';
 
-  // Filter out any frames that failed to decode
-  seqImages = seqImages.filter(Boolean);
-  if (seqImages.length === 0) { alert('No images could be loaded.'); return; }
+  if (failed > 0 || seqImages.some(frame => !frame)) {
+    cleanupSeq();
+    sourceMode = 'none';
+    updateExportBtnState();
+    alert(`Could not decode ${failed} sequence image${failed === 1 ? '' : 's'}.`);
+    return;
+  }
 
   const first = seqImages[0];
   const w = first.naturalWidth;
@@ -711,15 +475,15 @@ function onSeqLoaded(sorted) {
   paddedCanvas.height = maxDim;
   paddedCanvasCtx = paddedCanvas.getContext('2d');
 
-  if (videoTexture) videoTexture.dispose();
-  videoTexture = new THREE.CanvasTexture(paddedCanvas);
-  videoTexture.minFilter = THREE.LinearFilter;
-  videoTexture.magFilter = THREE.LinearFilter;
-  videoTexture.colorSpace = THREE.SRGBColorSpace;
-  videoTexture.wrapS = THREE.ClampToEdgeWrapping;
-  videoTexture.wrapT = THREE.ClampToEdgeWrapping;
+  if (imageTexture) imageTexture.dispose();
+  imageTexture = new THREE.CanvasTexture(paddedCanvas);
+  imageTexture.minFilter = THREE.LinearFilter;
+  imageTexture.magFilter = THREE.LinearFilter;
+  imageTexture.colorSpace = THREE.SRGBColorSpace;
+  imageTexture.wrapS = THREE.ClampToEdgeWrapping;
+  imageTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-  buildSphere(videoTexture);
+  buildSphere(imageTexture);
   drawSeqFrame(0);
   buildFisheyeUVs(Number(srcFovSlider.value));
   setAspectFromDimensions(w, h);
@@ -739,6 +503,7 @@ function onSeqLoaded(sorted) {
   updateSeqSeek();
 }
 
+if (false) {
 // ─── Export: Still Image ────────────────────────────────────────────────
 // Detects the source video's frame rate by measuring the interval between two
 // consecutive decoded frames using requestVideoFrameCallback.
@@ -868,6 +633,8 @@ function rgbaToBGR(rgba, width, height) {
   return out;
 }
 
+}
+
 // ─── Settings: Get/Save/Load ──────────────────────────────────────────────────
 function getSettings() {
   return {
@@ -926,151 +693,90 @@ function saveSettingsJSON() {
   URL.revokeObjectURL(url);
 }
 
-// ─── Export: AVI from image sequence ─────────────────────────────────────────
-async function exportSequenceToAvi() {
-  if (seqImages.length === 0) return;
+// ─── Image export ────────────────────────────────────────────────────────────
+function renderCurrentFrame() {
+  renderer.render(scene, camera);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(blob => {
+      if (blob) resolve(blob);
+      else reject(new Error('Could not encode the rendered image.'));
+    }, 'image/png');
+  });
+}
 
-  const fps   = getActiveFps();
-  const gl    = renderer.getContext();
-  const w     = renderer.domElement.width;
-  const h     = renderer.domElement.height;
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function outputDigits(total) {
+  return Math.max(4, String(total).length);
+}
+
+function paddedFrameName(index, total) {
+  return `unring-${String(index + 1).padStart(outputDigits(total), '0')}.png`;
+}
+
+saveStillBtn.addEventListener('click', async () => {
+  if (!imageTexture) return;
+  try {
+    const blob = await renderCurrentFrame();
+    const base = sourceName.replace(/\.[^.]+$/, '') || 'unring';
+    downloadBlob(blob, `${base}-unring.png`);
+    exportStatus.textContent = 'Saved corrected image';
+  } catch (err) {
+    exportStatus.textContent = 'Export failed: ' + err.message;
+  }
+});
+
+function updateExportBtnState() {
+  const hasSource = Boolean(imageTexture);
+  saveStillBtn.disabled = !hasSource;
+  exportSequenceBtn.disabled = sourceMode !== 'sequence' || seqImages.length === 0;
+}
+
+async function exportImageSequence() {
+  if (sourceMode !== 'sequence' || seqImages.length === 0) return;
+
   const total = seqImages.length;
-  const wasPlaying = seqPlaying;
-
+  const selectedIndex = seqIndex;
   seqPlaying = false;
-  exportAviBtn.disabled    = true;
-  exportAviBtn.textContent = 'Exporting...';
-
-  const bgrFrames = [];
+  playPauseBtn.textContent = '▶';
+  exportSequenceBtn.disabled = true;
+  saveStillBtn.disabled = true;
+  exportSequenceBtn.textContent = 'Exporting...';
+  exportProgress.hidden = false;
+  exportBar.value = 0;
 
   try {
     for (let i = 0; i < total; i++) {
       seqIndex = i;
       drawSeqFrame(i);
-      videoTexture.needsUpdate = true;
-      renderer.render(scene, camera);
-
-      const rgba = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-      bgrFrames.push(rgbaToBGR(rgba, w, h));
-
-      exportBar.value          = Math.round(((i + 1) / total) * 100);
+      const blob = await renderCurrentFrame();
+      downloadBlob(blob, paddedFrameName(i, total));
+      exportBar.value = Math.round(((i + 1) / total) * 100);
       exportStatus.textContent = `Frame ${i + 1} / ${total}`;
-      await new Promise(r => setTimeout(r, 0));
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
-
-    exportStatus.textContent = 'Building AVI…';
-    await new Promise(r => setTimeout(r, 0));
-
-    const blob = encodeAVI(bgrFrames, w, h, fps);
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'unring-export.avi';
-    a.click();
-    URL.revokeObjectURL(url);
-
-    saveSettingsJSON();
-    exportStatus.textContent = `Done — ${total} frames, ${(blob.size / 1e6).toFixed(1)} MB`;
+    exportStatus.textContent = `Saved ${total} corrected images`;
   } catch (err) {
     exportStatus.textContent = 'Export failed: ' + err.message;
     console.error(err);
   } finally {
-    exportAviBtn.textContent = 'Export AVI (Uncompressed)';
+    seqIndex = selectedIndex;
+    drawSeqFrame(seqIndex);
+    updateSeqSeek();
+    exportSequenceBtn.textContent = 'Export Image Sequence';
+    exportProgress.hidden = true;
     updateExportBtnState();
-    if (wasPlaying) { seqPlaying = true; playPauseBtn.textContent = '⏸'; }
   }
 }
 
-exportAviBtn.addEventListener('click', async () => {
-  if (sourceMode === 'sequence') {
-    await exportSequenceToAvi();
-    return;
-  }
-
-  // Determine export range: use markers if set, otherwise full video
-  let startTime, endTime;
-  if (markIn !== null && markOut !== null && markOut > markIn) {
-    startTime = markIn;
-    endTime = markOut;
-  } else if (markIn === null && markOut === null) {
-    startTime = 0;
-    endTime = video.duration;
-  } else {
-    return;
-  }
-
-  const fps        = getActiveFps();
-  const dt         = 1 / fps;
-  const gl         = renderer.getContext();
-  const w          = renderer.domElement.width;
-  const h          = renderer.domElement.height;
-  const totalFrames = Math.ceil((endTime - startTime) * fps);
-  const wasPlaying  = !video.paused;
-
-  // Lock UI during export
-  exportAviBtn.disabled  = true;
-  exportAviBtn.textContent = 'Exporting...';
-
-  const bgrFrames = [];
-
-  try {
-    for (let i = 0; i < totalFrames; i++) {
-      const t = startTime + i * dt;
-      if (t > endTime) break;
-
-      video.currentTime = t;
-      await new Promise(resolve => video.addEventListener('seeked', resolve, { once: true }));
-
-      // Redraw the current video frame onto the padded canvas
-      const vw = video.videoWidth;
-      const vh = video.videoHeight;
-      const maxDim = Math.max(vw, vh);
-      paddedCanvasCtx.fillStyle = '#000000';
-      paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
-      const px = (maxDim - vw) / 2;
-      const py = (maxDim - vh) / 2;
-      paddedCanvasCtx.drawImage(video, px, py, vw, vh);
-
-      videoTexture.needsUpdate = true;
-      renderer.render(scene, camera);
-
-      const rgba = new Uint8Array(w * h * 4);
-      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-      bgrFrames.push(rgbaToBGR(rgba, w, h));
-
-      const pct = Math.round(((i + 1) / totalFrames) * 100);
-      exportBar.value       = pct;
-      exportStatus.textContent = `Frame ${i + 1} / ${totalFrames}`;
-
-      // Yield to keep the UI responsive
-      await new Promise(r => setTimeout(r, 0));
-    }
-
-    exportStatus.textContent = 'Building AVI…';
-    await new Promise(r => setTimeout(r, 0));
-
-    const blob = encodeAVI(bgrFrames, w, h, fps);
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = 'unring-export.avi';
-    a.click();
-    URL.revokeObjectURL(url);
-
-    // Also save settings
-    saveSettingsJSON();
-
-    exportStatus.textContent = `Done — ${totalFrames} frames, ${(blob.size / 1e6).toFixed(1)} MB`;
-  } catch (err) {
-    exportStatus.textContent = 'Export failed: ' + err.message;
-    console.error(err);
-  } finally {
-    exportAviBtn.textContent = 'Export AVI (Uncompressed)';
-    updateExportBtnState();
-    if (wasPlaying) video.play();
-  }
-});
+exportSequenceBtn.addEventListener('click', exportImageSequence);
 
 // ─── Upload button & file input ───────────────────────────────────────────────
 uploadBtn.addEventListener('click', () => fileInput.click());
@@ -1086,9 +792,8 @@ fileInput.addEventListener('change', () => {
     }
   } else {
     const file = files[0];
-    if (isVideoFile(file))      loadVideoFile(file);
-    else if (isImageFile(file)) loadImageFile(file);
-    else alert('Unsupported file type. Please use .mp4, .mov, .webm, .avi, or a common image format.');
+    if (isImageFile(file)) loadImageFile(file);
+    else alert('Unsupported file type. Please use a common image format.');
   }
   fileInput.value = '';
 });
@@ -1154,9 +859,8 @@ function handleDroppedFiles(files) {
     }
   } else {
     const file = files[0];
-    if (isVideoFile(file))      loadVideoFile(file);
-    else if (isImageFile(file)) loadImageFile(file);
-    else alert('Unsupported file type. Please use .mp4, .mov, .webm, .avi, or a common image format.');
+    if (isImageFile(file)) loadImageFile(file);
+    else alert('Unsupported file type. Please use a common image format.');
   }
 }
 

@@ -9,8 +9,7 @@ Requires: PyQt6, opencv-python, numpy  (see requirements.txt)
 
 import sys
 import os
-import threading
-import time
+import re
 
 import cv2
 import numpy as np
@@ -27,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from engine import (
-    open_video, read_frame, video_info,
+    IMAGE_EXTENSIONS, open_image, image_info,
     build_camera_matrix, build_distortion_coeffs,
     build_remap, undistort_frame,
 )
@@ -54,14 +53,13 @@ class ExportWorker(QObject):
     status_msg = pyqtSignal(str)
     finished   = pyqtSignal(bool, str)    # success, message
 
-    def __init__(self, src_path: str, dst_path: str,
+    def __init__(self, image_paths: list[str], output_dir: str,
                  map1: np.ndarray, map2: np.ndarray,
-                 fps: float, width: int, height: int):
+                 width: int, height: int):
         super().__init__()
-        self.src_path = src_path
-        self.dst_path = dst_path
+        self.image_paths = image_paths
+        self.output_dir = output_dir
         self.map1, self.map2 = map1, map2
-        self.fps = fps
         self.width = width
         self.height = height
         self._cancel = False
@@ -71,44 +69,35 @@ class ExportWorker(QObject):
 
     @pyqtSlot()
     def run(self):
-        cap = cv2.VideoCapture(self.src_path)
-        if not cap.isOpened():
-            self.finished.emit(False, f"Cannot open source: {self.src_path}")
-            return
-
-        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(
-            self.dst_path, fourcc, self.fps, (self.width, self.height)
-        )
-        if not writer.isOpened():
-            cap.release()
-            self.finished.emit(False, f"Cannot write: {self.dst_path}")
-            return
-
+        os.makedirs(self.output_dir, exist_ok=True)
+        total = len(self.image_paths)
+        digits = max(4, len(str(total)))
         idx = 0
         while not self._cancel:
-            ok, frame = cap.read()
-            if not ok:
+            if idx >= total:
                 break
+            frame = open_image(self.image_paths[idx])
             result = undistort_frame(frame, self.map1, self.map2)
-            writer.write(result)
+            destination = os.path.join(
+                self.output_dir, f"unring-{idx + 1:0{digits}d}.png"
+            )
+            if not cv2.imwrite(destination, result):
+                self.finished.emit(False, f"Cannot write: {destination}")
+                return
             idx += 1
             pct = min(int(idx / max(total, 1) * 100), 100)
             self.progress.emit(pct)
 
-        writer.release()
-        cap.release()
-
         if self._cancel:
-            # Remove partial output
             try:
-                os.remove(self.dst_path)
+                for name in os.listdir(self.output_dir):
+                    if name.startswith("unring-") and name.endswith(".png"):
+                        os.remove(os.path.join(self.output_dir, name))
             except OSError:
                 pass
             self.finished.emit(False, "Export cancelled.")
         else:
-            self.finished.emit(True, f"Saved: {self.dst_path}")
+            self.finished.emit(True, f"Saved {total} PNG images to {self.output_dir}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,7 +164,8 @@ class MainWindow(QMainWindow):
         self.resize(1280, 780)
 
         # ── State ─────────────────────────────────────────────────────────
-        self._cap:      cv2.VideoCapture | None = None
+        self._image_paths: list[str] = []
+        self._images:      list[np.ndarray] = []
         self._info:     dict             | None = None
         self._map1:     np.ndarray       | None = None
         self._map2:     np.ndarray       | None = None
@@ -202,7 +192,7 @@ class MainWindow(QMainWindow):
         # ── Left: viewport + seek bar ──────────────────────────────────
         left = QVBoxLayout()
 
-        self._viewport = QLabel("Load a video to begin")
+        self._viewport = QLabel("Load an image or image sequence to begin")
         self._viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._viewport.setSizePolicy(QSizePolicy.Policy.Expanding,
                                       QSizePolicy.Policy.Expanding)
@@ -245,7 +235,7 @@ class MainWindow(QMainWindow):
         # File controls
         file_box = QGroupBox("File")
         file_lay = QVBoxLayout(file_box)
-        self._btn_open = QPushButton("Open Video…")
+        self._btn_open = QPushButton("Open Images…")
         file_lay.addWidget(self._btn_open)
         right.addWidget(file_box)
 
@@ -284,7 +274,7 @@ class MainWindow(QMainWindow):
         # Export (Phase 4)
         export_box = QGroupBox("Export")
         export_lay = QVBoxLayout(export_box)
-        self._btn_export = QPushButton("Process & Save Video…")
+        self._btn_export = QPushButton("Export PNG Sequence…")
         self._btn_export.setEnabled(False)
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
@@ -303,7 +293,7 @@ class MainWindow(QMainWindow):
         root.addWidget(right_widget)
 
         # Status bar
-        self.statusBar().showMessage("Ready – open a video file to begin.")
+        self.statusBar().showMessage("Ready - open an image or image sequence to begin.")
 
         # Playback timer
         self._play_timer = QTimer(self)
@@ -327,41 +317,50 @@ class MainWindow(QMainWindow):
     # ── Slots ──────────────────────────────────────────────────────────────
 
     def _on_open(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Open Video", "",
-            "Video Files (*.mp4 *.mov *.webm *.avi *.mkv);;All Files (*)"
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Open Images", "",
+            "Image Files (*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff);;All Files (*)"
         )
-        if not path:
+        if not paths:
             return
-        self._load_video(path)
+        self._load_images(paths)
 
-    def _load_video(self, path: str):
-        if self._cap is not None:
-            self._cap.release()
+    def _natural_key(self, path: str):
+        name = os.path.basename(path).lower()
+        return [int(part) if part.isdigit() else part
+                for part in re.split(r"(\d+)", name)]
+
+    def _load_images(self, paths: list[str]):
+        paths = sorted(paths, key=self._natural_key)
         try:
-            cap  = open_video(path)
-            info = video_info(cap)
+            images = [open_image(path) for path in paths]
         except IOError as e:
             QMessageBox.critical(self, "Error", str(e))
             return
 
-        self._cap      = cap
-        self._info     = info
-        self._src_path = path
+        first_info = image_info(images[0])
+        if any(image_info(image) != first_info for image in images[1:]):
+            QMessageBox.critical(self, "Error", "All images must have the same dimensions.")
+            return
+
+        self._image_paths = paths
+        self._images      = images
+        self._info        = first_info
+        self._src_path    = paths[0]
         self._maps_dirty = True
 
-        total = max(info["frames"] - 1, 0)
+        total = max(len(images) - 1, 0)
         self._seek_bar.setRange(0, total)
         self._seek_bar.setValue(0)
         self._seek_bar.setEnabled(True)
         self._btn_play.setEnabled(True)
         self._btn_export.setEnabled(True)
-        self._lbl_frame.setText(f"0/{info['frames']}")
+        self._lbl_frame.setText(f"1/{len(images)}")
 
-        fname = os.path.basename(path)
+        fname = os.path.basename(paths[0]) if len(paths) == 1 else f"{len(paths)} images"
         self.statusBar().showMessage(
-            f"{fname}  {info['width']}×{info['height']}  "
-            f"{info['fps']:.2f} fps  {info['frames']} frames"
+            f"{fname}  {first_info['width']}×{first_info['height']}  "
+            f"{len(images)} image{'s' if len(images) != 1 else ''}"
         )
 
         self._load_and_render(0)
@@ -388,7 +387,7 @@ class MainWindow(QMainWindow):
         self._on_param_changed()
 
     def _on_seek(self, pos: int):
-        if self._cap is None:
+        if not self._images:
             return
         self._stop_playback()
         self._load_and_render(pos)
@@ -406,18 +405,12 @@ class MainWindow(QMainWindow):
             self._play_timer.stop()
 
     def _on_play_tick(self):
-        if self._cap is None:
+        if not self._images:
             self._stop_playback()
             return
-        ok, frame = self._cap.read()
-        if not ok:
-            self._stop_playback()
-            return
-        pos = int(self._cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        pos = (self._seek_bar.value() + 1) % len(self._images)
         self._seek_bar.setValue(pos)
-        self._lbl_frame.setText(f"{pos}/{self._info['frames']}")
-        self._raw_frame = frame
-        self._display_frame(frame)
+        self._load_and_render(pos)
 
     def _stop_playback(self):
         self._play_timer.stop()
@@ -427,14 +420,11 @@ class MainWindow(QMainWindow):
     # ── Rendering ──────────────────────────────────────────────────────────
 
     def _load_and_render(self, frame_idx: int):
-        if self._cap is None:
+        if not self._images:
             return
-        try:
-            frame = read_frame(self._cap, frame_idx)
-        except IOError:
-            return
+        frame = self._images[frame_idx]
         self._raw_frame = frame
-        self._lbl_frame.setText(f"{frame_idx}/{self._info['frames']}")
+        self._lbl_frame.setText(f"{frame_idx + 1}/{len(self._images)}")
         self._display_frame(frame)
 
     def _render_current(self):
@@ -485,14 +475,12 @@ class MainWindow(QMainWindow):
     # ── Export (Phase 4) ───────────────────────────────────────────────────
 
     def _on_export(self):
-        if self._cap is None or self._info is None:
+        if not self._image_paths or self._info is None:
             return
 
-        base, _ = os.path.splitext(self._src_path)
-        default_out = base + "_unring.mp4"
-        dst, _ = QFileDialog.getSaveFileName(
-            self, "Save Corrected Video", default_out,
-            "MP4 Video (*.mp4);;All Files (*)"
+        default_out = os.path.join(os.path.dirname(self._src_path), "unring-output")
+        dst = QFileDialog.getExistingDirectory(
+            self, "Choose PNG Output Directory", default_out
         )
         if not dst:
             return
@@ -508,11 +496,10 @@ class MainWindow(QMainWindow):
 
         self._export_thread = QThread(self)
         self._export_worker = ExportWorker(
-            src_path=self._src_path,
-            dst_path=dst,
+            image_paths=self._image_paths,
+            output_dir=dst,
             map1=self._map1,
             map2=self._map2,
-            fps=self._info["fps"],
             width=self._info["width"],
             height=self._info["height"],
         )
@@ -551,8 +538,6 @@ class MainWindow(QMainWindow):
         self._stop_playback()
         if self._export_worker:
             self._export_worker.cancel()
-        if self._cap:
-            self._cap.release()
         super().closeEvent(event)
 
 
