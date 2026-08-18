@@ -13,6 +13,8 @@ const viewport      = document.getElementById('viewport');
 const sourceMonitor = document.getElementById('source-monitor');
 const playPauseBtn  = document.getElementById('play-pause-btn');
 const seekSlider    = document.getElementById('seek');
+const markInMarker  = document.getElementById('mark-in-marker');
+const markOutMarker = document.getElementById('mark-out-marker');
 const timeLabel     = document.getElementById('time-label');
 const volSlider     = document.getElementById('vol-slider');
 const srcFovSlider  = document.getElementById('src-fov');
@@ -363,6 +365,22 @@ function updateSeek() {
   const pct = video.currentTime / video.duration;
   seekSlider.value = Math.round(pct * 1000);
   timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+  updateScrubMarkers();
+}
+
+function updateScrubMarkers() {
+  if (!video.duration) return;
+  const positionMarker = (marker, time) => {
+    if (time === null || time < 0 || time > video.duration) {
+      marker.classList.remove('visible');
+      return;
+    }
+    marker.style.left = `${(time / video.duration) * 100}%`;
+    marker.classList.add('visible');
+  };
+
+  positionMarker(markInMarker, markIn);
+  positionMarker(markOutMarker, markOut);
 }
 
 playPauseBtn.addEventListener('click', () => {
@@ -810,18 +828,22 @@ function updateExportBtnState() {
 }
 
 markInBtn.addEventListener('click', () => {
+  if (!video.duration) return;
   markIn = video.currentTime;
   markInTime.textContent = formatTime(markIn);
   markInTime.classList.add('set');
   markInBtn.classList.add('set');
+  updateScrubMarkers();
   updateExportBtnState();
 });
 
 markOutBtn.addEventListener('click', () => {
+  if (!video.duration) return;
   markOut = video.currentTime;
   markOutTime.textContent = formatTime(markOut);
   markOutTime.classList.add('set');
   markOutBtn.classList.add('set');
+  updateScrubMarkers();
   updateExportBtnState();
 });
 
