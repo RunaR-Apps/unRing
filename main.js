@@ -31,13 +31,23 @@ const markInBtn     = document.getElementById('mark-in-btn');
 const markOutBtn    = document.getElementById('mark-out-btn');
 const markInTime    = document.getElementById('mark-in-time');
 const markOutTime   = document.getElementById('mark-out-time');
-const exportFpsEl   = document.getElementById('export-fps');
 const exportAviBtn  = document.getElementById('export-avi-btn');
 const exportProgress = document.getElementById('export-progress');
 const exportBar     = document.getElementById('export-bar');
 const exportStatus  = document.getElementById('export-status');
 const importSettingsBtn = document.getElementById('import-settings-btn');
 const settingsInput = document.getElementById('settings-input');
+
+const VIDEO_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/avi',
+  'video/x-msvideo',
+  'video/msvideo'
+];
+const VIDEO_EXT_RE = /\.(mp4|mov|webm|avi)$/i;
+const DEFAULT_FPS = 25;
 
 // ─── Three.js setup ──────────────────────────────────────────────────────────
 // preserveDrawingBuffer is required for canvas.toDataURL() and gl.readPixels()
@@ -71,6 +81,11 @@ let seqImages  = [];   // HTMLImageElement array (one per frame)
 let seqIndex   = 0;    // current frame index (0-based)
 let seqPlaying = false;
 let seqLastMs  = 0;    // timestamp of last frame advance (ms)
+let sourceVideoFps = DEFAULT_FPS;
+
+function getActiveFps() {
+  return sourceMode === 'video' ? sourceVideoFps : DEFAULT_FPS;
+}
 
 function buildSphere(tex) {
   if (sphereMesh) {
@@ -222,7 +237,7 @@ function tick(ts) {
     videoTexture.needsUpdate = true;
     updateSeek();
   } else if (sourceMode === 'sequence' && seqPlaying && seqImages.length > 0) {
-    const fps = Number(exportFpsEl.value);
+    const fps = getActiveFps();
     if (ts - seqLastMs >= 1000 / fps) {
       seqLastMs = ts;
       seqIndex = (seqIndex + 1) % seqImages.length;
@@ -314,20 +329,11 @@ rollSlider.addEventListener('input', () => {
   applyCameraRotation();
 });
 
-// ─── Aspect ratio presets ─────────────────────────────────────────────────────
-function getSelectedAspect() {
-  const active = document.querySelector('#aspect-btns button.active');
-  return active ? Number(active.dataset.aspect) : 1;
+function setAspectFromDimensions(width, height) {
+  if (!width || !height) return;
+  targetAspect = width / height;
+  resize();
 }
-
-document.querySelectorAll('#aspect-btns button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#aspect-btns button').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    targetAspect = Number(btn.dataset.aspect);
-    resize();
-  });
-});
 
 // ─── Space bar: play / pause ────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
@@ -408,9 +414,8 @@ volSlider.addEventListener('input', () => {
 
 // ─── File loading ─────────────────────────────────────────────────────────────
 function loadVideoFile(file) {
-  const allowed = ['video/mp4', 'video/quicktime', 'video/webm'];
-  if (!allowed.includes(file.type) && !file.name.match(/\.(mp4|mov|webm)$/i)) {
-    alert('Unsupported file type. Please use .mp4, .mov, or .webm.');
+  if (!VIDEO_MIME_TYPES.includes(file.type) && !VIDEO_EXT_RE.test(file.name)) {
+    alert('Unsupported file type. Please use .mp4, .mov, .webm, or .avi.');
     return;
   }
 
@@ -420,6 +425,9 @@ function loadVideoFile(file) {
   if (video.src) URL.revokeObjectURL(video.src);
 
   video.src = URL.createObjectURL(file);
+  video.onerror = () => {
+    alert('This video file could not be decoded by your browser. If this is an AVI file, convert it to H.264 .mp4 first.');
+  };
   video.load();
 
   video.addEventListener('canplay', onCanPlay, { once: true });
@@ -463,9 +471,8 @@ function onCanPlay() {
   videoTexture.wrapS = THREE.ClampToEdgeWrapping;
   videoTexture.wrapT = THREE.ClampToEdgeWrapping;
 
-  // Set output aspect ratio based on user selection
-  targetAspect = getSelectedAspect();
-  resize();
+  // Auto-detect output aspect from incoming video dimensions.
+  setAspectFromDimensions(vw, vh);
 
   // UV bake is already applied to the geometry; re-bake in case FOV changed.
   buildFisheyeUVs(Number(srcFovSlider.value));
@@ -512,19 +519,15 @@ function onCanPlay() {
   saveStillBtn.disabled = false;
   updateExportBtnState();
 
-  // Auto-detect source fps via requestVideoFrameCallback (two-frame interval)
+  // Auto-detect source fps and use it for export.
   detectVideoFps(video).then(fps => {
-    if (!fps) return;
-    const opts  = Array.from(exportFpsEl.options).map(o => Number(o.value));
-    const nearest = opts.reduce((a, b) => Math.abs(b - fps) < Math.abs(a - fps) ? b : a);
-    exportFpsEl.value = String(nearest);
+    sourceVideoFps = fps;
   });
 }
 
 // ─── File type helpers ────────────────────────────────────────────────────────
 function isVideoFile(file) {
-  return /\.(mp4|mov|webm)$/i.test(file.name) ||
-    ['video/mp4', 'video/quicktime', 'video/webm'].includes(file.type);
+  return VIDEO_EXT_RE.test(file.name) || VIDEO_MIME_TYPES.includes(file.type);
 }
 
 function isImageFile(file) {
@@ -591,6 +594,7 @@ function setTransportMode(mode) {
 // ─── Image file loading ───────────────────────────────────────────────────────
 function loadImageFile(file) {
   sourceMode = 'image';
+  sourceVideoFps = DEFAULT_FPS;
   cleanupSeq();
   if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
 
@@ -620,8 +624,7 @@ function loadImageFile(file) {
 
     buildSphere(videoTexture);
     buildFisheyeUVs(Number(srcFovSlider.value));
-    targetAspect = getSelectedAspect();
-    resize();
+    setAspectFromDimensions(w, h);
 
     sourceMonitor.innerHTML = '';
     const imgEl = new Image();
@@ -643,6 +646,7 @@ function loadImageFile(file) {
 // ─── Image sequence loading ───────────────────────────────────────────────────
 function loadImageSequence(files) {
   sourceMode = 'sequence';
+  sourceVideoFps = DEFAULT_FPS;
   cleanupSeq();
   if (video.src) { video.pause(); URL.revokeObjectURL(video.src); video.removeAttribute('src'); }
 
@@ -700,8 +704,7 @@ function onSeqLoaded(sorted) {
   buildSphere(videoTexture);
   drawSeqFrame(0);
   buildFisheyeUVs(Number(srcFovSlider.value));
-  targetAspect = getSelectedAspect();
-  resize();
+  setAspectFromDimensions(w, h);
 
   sourceMonitor.innerHTML = '';
   const imgEl = new Image();
@@ -724,17 +727,53 @@ function onSeqLoaded(sorted) {
 function detectVideoFps(vid) {
   return new Promise(resolve => {
     if (typeof vid.requestVideoFrameCallback !== 'function') {
-      resolve(null);
+      resolve(DEFAULT_FPS);
       return;
     }
-    let firstTime = null;
-    vid.requestVideoFrameCallback((_, meta) => {
-      firstTime = meta.mediaTime;
-      vid.requestVideoFrameCallback((__, meta2) => {
-        const interval = meta2.mediaTime - firstTime;
-        resolve(interval > 0 ? Math.round(1 / interval) : null);
+
+    const wasPaused = vid.paused;
+    const startTime = vid.currentTime;
+    let settled = false;
+
+    const finish = (fps) => {
+      if (settled) return;
+      settled = true;
+      if (wasPaused) {
+        vid.pause();
+        if (Math.abs(vid.currentTime - startTime) > 1e-3) {
+          vid.currentTime = startTime;
+        }
+      }
+      resolve(fps || DEFAULT_FPS);
+    };
+
+    const timer = setTimeout(() => finish(DEFAULT_FPS), 1200);
+
+    const sample = () => {
+      let firstTime = null;
+      vid.requestVideoFrameCallback((_, meta) => {
+        firstTime = meta.mediaTime;
+        vid.requestVideoFrameCallback((__, meta2) => {
+          clearTimeout(timer);
+          const interval = meta2.mediaTime - firstTime;
+          finish(interval > 0 ? Math.round(1 / interval) : DEFAULT_FPS);
+        });
       });
-    });
+    };
+
+    if (wasPaused) {
+      const p = vid.play();
+      if (p && typeof p.then === 'function') {
+        p.then(sample).catch(() => {
+          clearTimeout(timer);
+          finish(DEFAULT_FPS);
+        });
+      } else {
+        sample();
+      }
+    } else {
+      sample();
+    }
   });
 }
 
@@ -869,7 +908,7 @@ function saveSettingsJSON() {
 async function exportSequenceToAvi() {
   if (seqImages.length === 0) return;
 
-  const fps   = Number(exportFpsEl.value);
+  const fps   = getActiveFps();
   const gl    = renderer.getContext();
   const w     = renderer.domElement.width;
   const h     = renderer.domElement.height;
@@ -939,7 +978,7 @@ exportAviBtn.addEventListener('click', async () => {
     return;
   }
 
-  const fps        = Number(exportFpsEl.value);
+  const fps        = getActiveFps();
   const dt         = 1 / fps;
   const gl         = renderer.getContext();
   const w          = renderer.domElement.width;
@@ -1027,7 +1066,7 @@ fileInput.addEventListener('change', () => {
     const file = files[0];
     if (isVideoFile(file))      loadVideoFile(file);
     else if (isImageFile(file)) loadImageFile(file);
-    else alert('Unsupported file type. Please use .mp4, .mov, .webm, or a common image format.');
+    else alert('Unsupported file type. Please use .mp4, .mov, .webm, .avi, or a common image format.');
   }
   fileInput.value = '';
 });
@@ -1095,7 +1134,7 @@ function handleDroppedFiles(files) {
     const file = files[0];
     if (isVideoFile(file))      loadVideoFile(file);
     else if (isImageFile(file)) loadImageFile(file);
-    else alert('Unsupported file type. Please use .mp4, .mov, .webm, or a common image format.');
+    else alert('Unsupported file type. Please use .mp4, .mov, .webm, .avi, or a common image format.');
   }
 }
 
