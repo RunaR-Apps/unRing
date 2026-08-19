@@ -263,36 +263,60 @@ buildFisheyeUVs(Number(srcFovSlider.value));
 // Disable canvas pointer events initially so drop overlay is clickable
 canvas.style.pointerEvents = 'none';
 
+function roundedDegrees(value) {
+  return `${Math.round(Number(value))}°`;
+}
+
+function setSliderValue(slider, value) {
+  const min = Number(slider.min);
+  const max = Number(slider.max);
+  slider.value = Math.max(min, Math.min(max, value));
+  slider.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+document.querySelectorAll('.slider-row[data-slider]').forEach(row => {
+  const slider = document.getElementById(row.dataset.slider);
+  const resetButton = row.querySelector('.slider-reset');
+  resetButton.addEventListener('click', () => {
+    setSliderValue(slider, Number(row.dataset.default));
+  });
+  row.querySelectorAll('.slider-step').forEach(button => {
+    button.addEventListener('click', () => {
+      setSliderValue(slider, Number(slider.value) + Number(button.dataset.direction));
+    });
+  });
+});
+
 srcFovSlider.addEventListener('input', () => {
   const v = Number(srcFovSlider.value);
-  srcFovVal.textContent = v + '°';
+  srcFovVal.textContent = roundedDegrees(v);
   buildFisheyeUVs(v);
 });
 
 zoomSlider.addEventListener('input', () => {
   const v = Number(zoomSlider.value);
-  zoomVal.textContent = v + '°';
+  zoomVal.textContent = roundedDegrees(v);
   camera.fov = v;
   camera.updateProjectionMatrix();
 });
 
 tiltSlider.addEventListener('input', () => {
   const v = Number(tiltSlider.value);
-  tiltVal.textContent = v + '°';
+  tiltVal.textContent = roundedDegrees(v);
   tiltValue = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
 });
 
 pitchSlider.addEventListener('input', () => {
   const v = Number(pitchSlider.value);
-  pitchVal.textContent = v + '°';
+  pitchVal.textContent = roundedDegrees(v);
   pitchValue = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
 });
 
 rollSlider.addEventListener('input', () => {
   const v = Number(rollSlider.value);
-  rollVal.textContent = v + '°';
+  rollVal.textContent = roundedDegrees(v);
   rollOffset = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
 });
@@ -650,32 +674,32 @@ function applySettings(settings) {
   if (settings.srcFov !== undefined) {
     srcFovSlider.value = settings.srcFov;
     const v = Number(srcFovSlider.value);
-    srcFovVal.textContent = v + '°';
+    srcFovVal.textContent = roundedDegrees(v);
     buildFisheyeUVs(v);
   }
   if (settings.zoom !== undefined) {
     zoomSlider.value = settings.zoom;
     const v = Number(zoomSlider.value);
-    zoomVal.textContent = v + '°';
+    zoomVal.textContent = roundedDegrees(v);
     camera.fov = v;
     camera.updateProjectionMatrix();
   }
   if (settings.tilt !== undefined) {
     tiltSlider.value = settings.tilt;
     const v = Number(tiltSlider.value);
-    tiltVal.textContent = v + '°';
+    tiltVal.textContent = roundedDegrees(v);
     tiltValue = THREE.MathUtils.degToRad(v);
   }
   if (settings.pitch !== undefined) {
     pitchSlider.value = settings.pitch;
     const v = Number(pitchSlider.value);
-    pitchVal.textContent = v + '°';
+    pitchVal.textContent = roundedDegrees(v);
     pitchValue = THREE.MathUtils.degToRad(v);
   }
   if (settings.roll !== undefined) {
     rollSlider.value = settings.roll;
     const v = Number(rollSlider.value);
-    rollVal.textContent = v + '°';
+    rollVal.textContent = roundedDegrees(v);
     rollOffset = THREE.MathUtils.degToRad(v);
   }
   applyCameraRotation();

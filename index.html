@@ -203,6 +203,28 @@
       cursor: pointer;
     }
 
+    .slider-control {
+      display: grid;
+      grid-template-columns: 28px 1fr 28px 28px;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .slider-control button {
+      height: 24px;
+      padding: 0;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 0.9rem;
+      line-height: 1;
+    }
+
+    .slider-control button:hover { background: #2a2a2a; }
+    .slider-control .slider-reset { font-size: 1rem; }
+
     /* Transport controls */
     #transport {
       position: absolute;
@@ -553,29 +575,54 @@
       <div class="sidebar-section">
         <h2>Lens Calibration</h2>
 
-        <div class="slider-row">
+        <div class="slider-row" data-slider="src-fov" data-default="180">
           <div class="slider-label">Source FOV <span id="src-fov-val">180°</span></div>
-          <input type="range" id="src-fov" min="90" max="240" step="1" value="180" />
+          <div class="slider-control">
+            <button type="button" class="slider-step" data-direction="-1" aria-label="Decrease Source FOV">−</button>
+            <input type="range" id="src-fov" min="90" max="240" step="any" value="180" />
+            <button type="button" class="slider-step" data-direction="1" aria-label="Increase Source FOV">+</button>
+            <button type="button" class="slider-reset" aria-label="Reset Source FOV" title="Reset Source FOV">↶</button>
+          </div>
         </div>
 
-        <div class="slider-row">
+        <div class="slider-row" data-slider="zoom" data-default="75">
           <div class="slider-label">Virtual Zoom (FOV) <span id="zoom-val">75°</span></div>
-          <input type="range" id="zoom" min="20" max="120" step="1" value="75" />
+          <div class="slider-control">
+            <button type="button" class="slider-step" data-direction="-1" aria-label="Decrease Virtual Zoom">−</button>
+            <input type="range" id="zoom" min="20" max="120" step="any" value="75" />
+            <button type="button" class="slider-step" data-direction="1" aria-label="Increase Virtual Zoom">+</button>
+            <button type="button" class="slider-reset" aria-label="Reset Virtual Zoom" title="Reset Virtual Zoom">↶</button>
+          </div>
         </div>
 
-        <div class="slider-row">
+        <div class="slider-row" data-slider="tilt" data-default="0">
           <div class="slider-label">Tilt <span id="tilt-val">0°</span></div>
-          <input type="range" id="tilt" min="-45" max="45" step="any" value="0" />
+          <div class="slider-control">
+            <button type="button" class="slider-step" data-direction="-1" aria-label="Decrease Tilt">−</button>
+            <input type="range" id="tilt" min="-45" max="45" step="any" value="0" />
+            <button type="button" class="slider-step" data-direction="1" aria-label="Increase Tilt">+</button>
+            <button type="button" class="slider-reset" aria-label="Reset Tilt" title="Reset Tilt">↶</button>
+          </div>
         </div>
 
-        <div class="slider-row">
+        <div class="slider-row" data-slider="pitch" data-default="0">
           <div class="slider-label">Pitch <span id="pitch-val">0°</span></div>
-          <input type="range" id="pitch" min="-45" max="45" step="any" value="0" />
+          <div class="slider-control">
+            <button type="button" class="slider-step" data-direction="-1" aria-label="Decrease Pitch">−</button>
+            <input type="range" id="pitch" min="-45" max="45" step="any" value="0" />
+            <button type="button" class="slider-step" data-direction="1" aria-label="Increase Pitch">+</button>
+            <button type="button" class="slider-reset" aria-label="Reset Pitch" title="Reset Pitch">↶</button>
+          </div>
         </div>
 
-        <div class="slider-row">
+        <div class="slider-row" data-slider="roll" data-default="0">
           <div class="slider-label">Roll <span id="roll-val">0°</span></div>
-          <input type="range" id="roll" min="-45" max="45" step="1" value="0" />
+          <div class="slider-control">
+            <button type="button" class="slider-step" data-direction="-1" aria-label="Decrease Roll">−</button>
+            <input type="range" id="roll" min="-45" max="45" step="any" value="0" />
+            <button type="button" class="slider-step" data-direction="1" aria-label="Increase Roll">+</button>
+            <button type="button" class="slider-reset" aria-label="Reset Roll" title="Reset Roll">↶</button>
+          </div>
         </div>
       </div>
 
