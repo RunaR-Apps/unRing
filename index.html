@@ -327,6 +327,13 @@
       color: #fff;
     }
     .full-btn.primary:hover:not(:disabled) { background: #1558b0; }
+    .full-btn.highlighted {
+      box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.35);
+      font-weight: 600;
+    }
+    .full-btn.highlighted:disabled {
+      opacity: 0.7;
+    }
 
     .marker-grid {
       display: grid;
@@ -630,8 +637,9 @@
       <div class="sidebar-section">
         <h2>Export</h2>
 
-        <button class="full-btn primary" id="save-still-btn" disabled>Save Image (PNG)</button>
-        <button class="full-btn" id="export-sequence-btn" disabled>Export Image Sequence</button>
+        <button class="full-btn primary" id="save-still-btn" disabled>Export Image (PNG)</button>
+        <button class="full-btn primary" id="export-settings-btn" disabled>Export Settings</button>
+        <button class="full-btn primary highlighted" id="export-sequence-btn" disabled>Export Image Sequence</button>
 
         <div id="export-progress" hidden>
           <progress id="export-bar" max="100" value="0"></progress>

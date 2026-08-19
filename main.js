@@ -29,6 +29,7 @@ const exportProgress = document.getElementById('export-progress');
 const exportBar     = document.getElementById('export-bar');
 const exportStatus  = document.getElementById('export-status');
 const importSettingsBtn = document.getElementById('import-settings-btn');
+const exportSettingsBtn = document.getElementById('export-settings-btn');
 const settingsInput = document.getElementById('settings-input');
 
 const DEFAULT_FPS = 25;
@@ -717,6 +718,8 @@ function saveSettingsJSON() {
   URL.revokeObjectURL(url);
 }
 
+exportSettingsBtn.addEventListener('click', saveSettingsJSON);
+
 // ─── Image export ────────────────────────────────────────────────────────────
 function renderCurrentFrame() {
   renderer.render(scene, camera);
@@ -760,6 +763,7 @@ saveStillBtn.addEventListener('click', async () => {
 function updateExportBtnState() {
   const hasSource = Boolean(imageTexture);
   saveStillBtn.disabled = !hasSource;
+  exportSettingsBtn.disabled = !hasSource;
   exportSequenceBtn.disabled = sourceMode !== 'sequence' || seqImages.length === 0;
 }
 
