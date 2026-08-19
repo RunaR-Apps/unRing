@@ -301,6 +301,12 @@ zoomSlider.addEventListener('input', () => {
   camera.updateProjectionMatrix();
 });
 
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const direction = e.deltaY > 0 ? 1 : -1;
+  setSliderValue(zoomSlider, Number(zoomSlider.value) + direction * 2);
+}, { passive: false });
+
 tiltSlider.addEventListener('input', () => {
   const v = Number(tiltSlider.value);
   tiltVal.textContent = roundedDegrees(v);
