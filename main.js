@@ -124,6 +124,7 @@ function applyCameraRotation() {
   const euler = new THREE.Euler(pitchValue, tiltValue, rollOffset, 'YXZ');
   q.setFromEuler(euler);
   camera.quaternion.copy(q);
+  camera.updateMatrixWorld(true);
 }
 
 // ─── Drag-to-look ─────────────────────────────────────────────────────────────
@@ -908,10 +909,9 @@ function handleDroppedFiles(files) {
 
 // ─── Overlay Tools ───────────────────────────────────────────────────────────
 const overlaySvg  = document.getElementById('overlay-svg');
-const toolsBtn    = document.getElementById('tools-btn');
-const toolsPanel  = document.getElementById('tools-panel');
 const toolThreePointLineBtn = document.getElementById('tool-three-point-line-btn');
 const threePointLineColorInput = document.getElementById('three-point-line-color');
+const optimizeFovBtn = document.getElementById('optimize-fov-btn');
 
 let oTools    = [];   // [{id, type, ...data}]
 let oSelected = null; // id of selected tool
@@ -921,6 +921,10 @@ threePointLineColorInput.addEventListener('input', () => { threePointLineColor =
 let oDrag     = null; // active drag state
 let oIdCtr    = 0;
 
+function updateOptimizeButtonState() {
+  optimizeFovBtn.disabled = oTools.filter(tool => tool.type === 'three-point-line').length < 2;
+}
+
 // SVG namespace helper
 function ns(tag, attrs = {}) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -928,19 +932,7 @@ function ns(tag, attrs = {}) {
   return el;
 }
 
-// ─── Panel toggle ─────────────────────────────────────────────────────────────
-toolsBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const open = toolsPanel.classList.toggle('hidden') === false;
-  toolsBtn.classList.toggle('panel-open', open);
-});
-const toolsCloseBtn = document.getElementById('tools-close-btn');
 window.addEventListener('resize', () => renderOAll());
-toolsCloseBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  toolsPanel.classList.add('hidden');
-  toolsBtn.classList.remove('panel-open');
-});
 
 // ─── Creation mode ────────────────────────────────────────────────────────────
 function setOMode(mode) {
@@ -952,6 +944,56 @@ function setOMode(mode) {
 }
 
 toolThreePointLineBtn.addEventListener('click', () => setOMode(oMode === 'three-point-line' ? null : 'three-point-line'));
+
+function getFovOptimizationScore(lines, sourceFov) {
+  let score = 0;
+  for (const line of lines) {
+    const points = line.points.map(point => imagePixelToScreenPoint(point, sourceFov));
+    if (points.some(point => !point)) return Number.POSITIVE_INFINITY;
+    const { deviationPercent } = calculateThreePointStraightness(points);
+    score += deviationPercent ** 2;
+  }
+  return score / lines.length;
+}
+
+function optimizeSourceFov() {
+  const lines = oTools.filter(tool => tool.type === 'three-point-line');
+  if (lines.length < 2) return;
+
+  let lower = Number(srcFovSlider.min);
+  let upper = Number(srcFovSlider.max);
+  const ratio = (Math.sqrt(5) - 1) / 2;
+  let left = upper - ratio * (upper - lower);
+  let right = lower + ratio * (upper - lower);
+  let leftScore = getFovOptimizationScore(lines, left);
+  let rightScore = getFovOptimizationScore(lines, right);
+
+  for (let iteration = 0; iteration < 36; iteration++) {
+    if (leftScore <= rightScore) {
+      upper = right;
+      right = left;
+      rightScore = leftScore;
+      left = upper - ratio * (upper - lower);
+      leftScore = getFovOptimizationScore(lines, left);
+    } else {
+      lower = left;
+      left = right;
+      leftScore = rightScore;
+      right = lower + ratio * (upper - lower);
+      rightScore = getFovOptimizationScore(lines, right);
+    }
+  }
+
+  const candidates = [lower, upper, left, right];
+  const bestFov = candidates.reduce((best, candidate) =>
+    getFovOptimizationScore(lines, candidate) < getFovOptimizationScore(lines, best)
+      ? candidate : best
+  );
+  srcFovSlider.value = bestFov;
+  srcFovSlider.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+optimizeFovBtn.addEventListener('click', optimizeSourceFov);
 
 // Press Escape to cancel creation mode
 document.addEventListener('keydown', (e) => {
@@ -995,7 +1037,7 @@ function svgPointToImagePixel(point) {
   return screenPointToImagePixel({ x: point.x + rect.left, y: point.y + rect.top });
 }
 
-function imagePixelToScreenPoint(point) {
+function imagePixelToScreenPoint(point, sourceFov = Number(srcFovSlider.value)) {
   const image = seqImages[0];
   if (!image) return null;
   const maxDim = Math.max(image.naturalWidth, image.naturalHeight);
@@ -1003,7 +1045,7 @@ function imagePixelToScreenPoint(point) {
   const offsetY = (maxDim - image.naturalHeight) / 2;
   const u = (point.x + offsetX) / maxDim;
   const v = (point.y + offsetY) / maxDim;
-  const halfFov = THREE.MathUtils.degToRad(Number(srcFovSlider.value) / 2);
+  const halfFov = THREE.MathUtils.degToRad(sourceFov / 2);
   const radius = Math.hypot(u - 0.5, v - 0.5);
   const theta = radius / 0.5 * halfFov;
   const phi = Math.atan2(v - 0.5, u - 0.5);
@@ -1030,7 +1072,7 @@ function clearPendingThreePointPreview() {
 
 function renderPendingThreePointPreview() {
   clearPendingThreePointPreview();
-  const points = oPendingThreePointPixels.map(imagePixelToScreenPoint).filter(Boolean);
+  const points = oPendingThreePointPixels.map(point => imagePixelToScreenPoint(point)).filter(Boolean);
   if (!points.length) return;
   const g = ns('g', { 'data-pending-three-point': 'true', 'pointer-events': 'none' });
   if (points.length > 1) {
@@ -1099,6 +1141,7 @@ function addOThreePointLine(points) {
   oTools.push(tool);
   renderOTool(tool);
   selectOTool(tool.id);
+  updateOptimizeButtonState();
 }
 
 // ─── Select / deselect / remove ───────────────────────────────────────────────
@@ -1108,6 +1151,7 @@ function removeOTool(id) {
   overlaySvg.querySelector(`[data-tid="${id}"]`)?.remove();
   oTools = oTools.filter(t => t.id !== id);
   if (oSelected === id) oSelected = null;
+  updateOptimizeButtonState();
 }
 
 overlaySvg.addEventListener('click', (e) => { if (e.target === overlaySvg) deselectOAll(); });
@@ -1139,7 +1183,7 @@ function calculateThreePointStraightness(points) {
 }
 
 function renderOThreePointLine(tool) {
-  const screenPoints = tool.points.map(imagePixelToScreenPoint);
+  const screenPoints = tool.points.map(point => imagePixelToScreenPoint(point));
   if (screenPoints.some(point => !point)) return;
   const { deviationPercent, straight } = calculateThreePointStraightness(screenPoints);
   const color = straight ? '#4ade80' : (tool.color || '#4ade80');

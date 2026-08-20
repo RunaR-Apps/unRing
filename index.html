@@ -59,8 +59,6 @@
 
     header .header-btn:hover { background: #333; }
 
-    header #tools-btn { margin-left: auto; }
-
     #file-input { display: none; }
 
     #filename {
@@ -385,53 +383,6 @@
     }
 
     /* ── Overlay Tools ── */
-    #tools-btn {
-      background: #2a2a2a;
-      color: #ccc;
-      border: 1px solid #444;
-      border-radius: 6px;
-      padding: 7px 14px;
-      font-size: 0.85rem;
-      cursor: pointer;
-      transition: background 0.15s, border-color 0.15s;
-    }
-    #tools-btn:hover { background: #333; }
-    #tools-btn.panel-open { background: #1a3a5c; border-color: #1a73e8; color: #6ab0ff; }
-
-    #tools-panel {
-      position: fixed;
-      top: 52px;
-      right: 274px; /* sit above the sidebar */
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 8px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      z-index: 100;
-      min-width: 178px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    }
-    #tools-panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 2px;
-    }
-    #tools-close-btn {
-      background: none;
-      border: none;
-      color: #555;
-      font-size: 1rem;
-      line-height: 1;
-      cursor: pointer;
-      padding: 0 2px;
-      transition: color 0.12s;
-    }
-    #tools-close-btn:hover { color: #ccc; }
-    #tools-panel.hidden { display: none; }
-
     .tp-title {
       font-size: 0.68rem;
       font-weight: 700;
@@ -500,20 +451,7 @@
     <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif" multiple />
     <input type="file" id="settings-input" accept=".json" style="display:none;" />
     <span id="filename">No file loaded</span>
-    <button id="tools-btn">⊕ Tools</button>
   </header>
-
-  <!-- Overlay tools panel (floating) -->
-  <div id="tools-panel" class="hidden">
-    <div id="tools-panel-header">
-      <div class="tp-title" style="margin-bottom:0">Overlay Tools</div>
-      <button id="tools-close-btn" title="Close">✕</button>
-    </div>
-    <div class="tp-tool-row">
-      <input type="color" id="three-point-line-color" value="#4ade80" title="Three-point line color">
-      <button class="tool-create-btn" id="tool-three-point-line-btn">⌁ Add 3-Point Line</button>
-    </div>
-  </div>
 
   <div id="main-area">
     <div id="viewport">
@@ -608,6 +546,16 @@
             <button type="button" class="slider-reset" aria-label="Reset Roll" title="Reset Roll">↶</button>
           </div>
         </div>
+      </div>
+
+      <!-- Overlay Tools -->
+      <div id="tools-panel" class="sidebar-section">
+        <h2>Overlay Tools</h2>
+        <div class="tp-tool-row">
+          <input type="color" id="three-point-line-color" value="#4ade80" title="Three-point line color">
+          <button class="tool-create-btn" id="tool-three-point-line-btn">⌁ Add 3-Point Line</button>
+        </div>
+        <button class="full-btn primary" id="optimize-fov-btn" disabled>Optimize Source FOV</button>
       </div>
 
       <!-- Export -->
