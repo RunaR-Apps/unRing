@@ -373,9 +373,25 @@ seekSlider.addEventListener('input', () => {
 });
 
 // ─── Image loading ───────────────────────────────────────────────────────────
+const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
+const MAX_SEQUENCE_FILES = 300;
+const MAX_IMAGE_PIXELS = 100_000_000;
+
 function isImageFile(file) {
   return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(file.name) ||
     file.type.startsWith('image/');
+}
+
+function validateImageFiles(files) {
+  const selected = Array.from(files);
+  const totalBytes = selected.reduce((total, file) => total + file.size, 0);
+  // Bound local decode work to reduce memory/CPU exhaustion from oversized uploads.
+  if (selected.length > MAX_SEQUENCE_FILES || selected.some(file => file.size > MAX_IMAGE_BYTES) ||
+      totalBytes > MAX_IMAGE_BYTES * 2) {
+    alert('Image selection is too large. Use fewer or smaller image files.');
+    return false;
+  }
+  return true;
 }
 
 function cleanupSeq() {
@@ -429,6 +445,12 @@ function loadImageFile(file) {
   seqUrls.push(url);
   const img = new Image();
   img.onload = () => {
+    if (img.naturalWidth * img.naturalHeight > MAX_IMAGE_PIXELS) {
+      cleanupSeq();
+      sourceMode = 'none';
+      alert('Image dimensions are too large to process safely.');
+      return;
+    }
     seqImages = [img];
     const w = img.naturalWidth;
     const h = img.naturalHeight;
@@ -501,6 +523,14 @@ function onSeqLoaded(failed) {
     sourceMode = 'none';
     updateExportBtnState();
     alert(`Could not decode ${failed} sequence image${failed === 1 ? '' : 's'}.`);
+    return;
+  }
+
+  if (seqImages.some(frame => frame.naturalWidth * frame.naturalHeight > MAX_IMAGE_PIXELS)) {
+    cleanupSeq();
+    sourceMode = 'none';
+    updateExportBtnState();
+    alert('An image is too large to process safely.');
     return;
   }
 
@@ -848,6 +878,7 @@ dropOpen.addEventListener('click',  () => fileInput.click());
 fileInput.addEventListener('change', () => {
   const files = fileInput.files;
   if (!files.length) { fileInput.value = ''; return; }
+  if (!validateImageFiles(files)) { fileInput.value = ''; return; }
   if (files.length > 1) {
     if (Array.from(files).every(isImageFile)) {
       loadImageSequence(files);
@@ -915,6 +946,7 @@ viewport.addEventListener('drop', (e) => {
 
 function handleDroppedFiles(files) {
   if (!files || files.length === 0) return;
+  if (!validateImageFiles(files)) return;
   if (files.length > 1) {
     if (Array.from(files).every(isImageFile)) {
       loadImageSequence(files);
