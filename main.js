@@ -911,19 +911,13 @@ const overlaySvg  = document.getElementById('overlay-svg');
 const toolsBtn    = document.getElementById('tools-btn');
 const toolsPanel  = document.getElementById('tools-panel');
 const toolThreePointLineBtn = document.getElementById('tool-three-point-line-btn');
-const toolGridBtn      = document.getElementById('tool-grid-btn');
 const threePointLineColorInput = document.getElementById('three-point-line-color');
-const gridColorInput   = document.getElementById('grid-color');
-const gridHCells  = document.getElementById('grid-h-cells');
-const gridVCells  = document.getElementById('grid-v-cells');
 
 let oTools    = [];   // [{id, type, ...data}]
 let oSelected = null; // id of selected tool
-let oMode     = null; // 'grid' | null  (creation mode)
+let oMode     = null; // 'three-point-line' | null  (creation mode)
 let threePointLineColor = '#4ade80';
-let gridColor = '#22d3ee';
 threePointLineColorInput.addEventListener('input', () => { threePointLineColor = threePointLineColorInput.value; });
-gridColorInput.addEventListener('input', () => { gridColor = gridColorInput.value; });
 let oDrag     = null; // active drag state
 let oIdCtr    = 0;
 
@@ -955,25 +949,17 @@ function setOMode(mode) {
   overlaySvg.style.pointerEvents = mode ? 'all' : 'none';
   overlaySvg.style.cursor = mode ? 'crosshair' : '';
   toolThreePointLineBtn.classList.toggle('active-mode', mode === 'three-point-line');
-  toolGridBtn.classList.toggle('active-mode', mode === 'grid');
 }
 
 toolThreePointLineBtn.addEventListener('click', () => setOMode(oMode === 'three-point-line' ? null : 'three-point-line'));
-toolGridBtn.addEventListener('click', () => setOMode(oMode === 'grid' ? null : 'grid'));
 
 // Press Escape to cancel creation mode
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && oMode) {
     setOMode(null);
-    cStart = null;
-    if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; }
     clearPendingThreePointPreview();
   }
 });
-
-// ─── Creation drag (mousedown on the SVG background) ─────────────────────────
-let cStart = null; // {x, y}
-let cPrev  = null; // preview SVG element
 
 function svgPt(e) {
   const r = overlaySvg.getBoundingClientRect();
@@ -1002,6 +988,11 @@ function screenPointToImagePixel(point) {
   const y = v * maxDim - offsetY;
   if (x < 0 || x > image.naturalWidth || y < 0 || y > image.naturalHeight) return null;
   return { x, y };
+}
+
+function svgPointToImagePixel(point) {
+  const rect = overlaySvg.getBoundingClientRect();
+  return screenPointToImagePixel({ x: point.x + rect.left, y: point.y + rect.top });
 }
 
 function imagePixelToScreenPoint(point) {
@@ -1070,35 +1061,13 @@ overlaySvg.addEventListener('mousedown', (e) => {
     }
     return;
   }
-  const p = svgPt(e);
-  cStart = p;
-  cPrev = ns('rect', { x: p.x, y: p.y, width: 0, height: 0,
-    fill: 'none', stroke: gridColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
-  overlaySvg.appendChild(cPrev);
 });
 
 window.addEventListener('mousemove', (e) => {
-  if (cStart && cPrev) {
-    const p = svgPt(e);
-    const x = Math.min(cStart.x, p.x), y = Math.min(cStart.y, p.y);
-    cPrev.setAttribute('x', x); cPrev.setAttribute('y', y);
-    cPrev.setAttribute('width',  Math.abs(p.x - cStart.x));
-    cPrev.setAttribute('height', Math.abs(p.y - cStart.y));
-  }
   if (oDrag) handleODrag(e);
 });
 
-window.addEventListener('mouseup', (e) => {
-  if (cStart) {
-    const p = svgPt(e);
-    if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; }
-    if (Math.hypot(p.x - cStart.x, p.y - cStart.y) > 8) {
-      addOGrid(Math.min(cStart.x, p.x), Math.min(cStart.y, p.y),
-               Math.max(cStart.x, p.x), Math.max(cStart.y, p.y));
-    }
-    cStart = null;
-    setOMode(null);
-  }
+window.addEventListener('mouseup', () => {
   if (oDrag) oDrag = null;
 });
 
@@ -1111,7 +1080,8 @@ function handleODrag(e) {
     if (oDrag.idx === 0) { tool.x1 = p.x; tool.y1 = p.y; }
     else                  { tool.x2 = p.x; tool.y2 = p.y; }
   } else if (oDrag.kind === 'corner') {
-    tool.corners[oDrag.idx] = { x: p.x, y: p.y };
+    const pixel = svgPointToImagePixel(p);
+    if (pixel) tool.corners[oDrag.idx] = pixel;
   }
   renderOTool(tool);
 }
@@ -1126,16 +1096,6 @@ function addOLine(x1, y1, x2, y2) {
 
 function addOThreePointLine(points) {
   const tool = { id: ++oIdCtr, type: 'three-point-line', points: points.map(point => ({ ...point })), color: threePointLineColor };
-  oTools.push(tool);
-  renderOTool(tool);
-  selectOTool(tool.id);
-}
-
-function addOGrid(x1, y1, x2, y2) {
-  const hC = Math.max(1, parseInt(gridHCells.value) || 4);
-  const vC = Math.max(1, parseInt(gridVCells.value) || 4);
-  const tool = { id: ++oIdCtr, type: 'grid', hCells: hC, vCells: vC, color: gridColor,
-    corners: [{ x: x1, y: y1 }, { x: x2, y: y1 }, { x: x2, y: y2 }, { x: x1, y: y2 }] };
   oTools.push(tool);
   renderOTool(tool);
   selectOTool(tool.id);
@@ -1245,7 +1205,9 @@ function renderOLine(tool) {
 function renderOGrid(tool) {
   const sel             = oSelected === tool.id;
   const color           = tool.color || '#22d3ee';
-  const [tl, tr, br, bl] = tool.corners;
+  const screenCorners = tool.corners.map(imagePixelToScreenPoint);
+  if (screenCorners.some(point => !point)) return;
+  const [tl, tr, br, bl] = screenCorners;
   const { hCells, vCells } = tool;
   const g               = ns('g', { 'data-tid': tool.id });
 
@@ -1279,7 +1241,7 @@ function renderOGrid(tool) {
   g.appendChild(hitBorder);
 
   // Corner handles
-  tool.corners.forEach((c, idx) => {
+  screenCorners.forEach((c, idx) => {
     const ep = ns('circle', { cx: c.x, cy: c.y, r: 6,
       fill: color, stroke: '#1a1a1a', 'stroke-width': 1.5,
       cursor: 'move', 'pointer-events': 'all' });
@@ -1289,8 +1251,8 @@ function renderOGrid(tool) {
 
   // Remove button at centroid
   if (sel) {
-    const cx = tool.corners.reduce((s, c) => s + c.x, 0) / 4;
-    const cy = tool.corners.reduce((s, c) => s + c.y, 0) / 4;
+    const cx = screenCorners.reduce((s, c) => s + c.x, 0) / 4;
+    const cy = screenCorners.reduce((s, c) => s + c.y, 0) / 4;
     g.appendChild(makeORemoveBtn(cx, cy, tool.id));
   }
 

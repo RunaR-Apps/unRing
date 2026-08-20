@@ -479,28 +479,6 @@
     .tp-tool-row input[type=color]::-webkit-color-swatch-wrapper { padding: 1px; }
     .tp-tool-row input[type=color]::-webkit-color-swatch { border-radius: 2px; border: none; }
 
-    .tp-grid-opts {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 6px;
-    }
-    .tp-grid-opts label {
-      font-size: 0.74rem;
-      color: #777;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-    }
-    .tp-grid-opts input[type=number] {
-      background: #111;
-      border: 1px solid #333;
-      color: #ccc;
-      border-radius: 4px;
-      padding: 4px 6px;
-      font-size: 0.8rem;
-      width: 100%;
-    }
-
     /* SVG overlay over the viewport */
     #overlay-svg {
       position: absolute;
@@ -534,16 +512,6 @@
     <div class="tp-tool-row">
       <input type="color" id="three-point-line-color" value="#4ade80" title="Three-point line color">
       <button class="tool-create-btn" id="tool-three-point-line-btn">⌁ Add 3-Point Line</button>
-    </div>
-    <hr class="tp-sep">
-    <div class="tp-title">Grid Options</div>
-    <div class="tp-grid-opts">
-      <label>H Cells<input type="number" id="grid-h-cells" value="4" min="1" max="32"></label>
-      <label>V Cells<input type="number" id="grid-v-cells" value="4" min="1" max="32"></label>
-    </div>
-    <div class="tp-tool-row">
-      <input type="color" id="grid-color" value="#22d3ee" title="Grid color">
-      <button class="tool-create-btn" id="tool-grid-btn">⊞ Add Grid</button>
     </div>
   </div>
 
