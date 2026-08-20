@@ -1124,6 +1124,16 @@ function handleODrag(e) {
   } else if (oDrag.kind === 'corner') {
     const pixel = svgPointToImagePixel(p);
     if (pixel) tool.corners[oDrag.idx] = pixel;
+  } else if (oDrag.kind === 'three-point-node') {
+    const pixel = svgPointToImagePixel(p);
+    if (pixel) tool.points[oDrag.idx] = pixel;
+  } else if (oDrag.kind === 'three-point-line') {
+    const pixel = svgPointToImagePixel(p);
+    if (pixel) {
+      const dx = pixel.x - oDrag.start.x;
+      const dy = pixel.y - oDrag.start.y;
+      tool.points = oDrag.points.map(point => ({ x: point.x + dx, y: point.y + dy }));
+    }
   }
   renderOTool(tool);
 }
@@ -1188,6 +1198,22 @@ function renderOThreePointLine(tool) {
   const { deviationPercent, straight } = calculateThreePointStraightness(screenPoints);
   const color = straight ? '#4ade80' : (tool.color || '#4ade80');
   const g = ns('g', { 'data-tid': tool.id });
+  const hit = ns('polyline', {
+    points: screenPoints.map(point => `${point.x},${point.y}`).join(' '),
+    fill: 'none', stroke: 'transparent', 'stroke-width': 18,
+    'pointer-events': 'stroke', cursor: 'move'
+  });
+  hit.addEventListener('click', (e) => { e.stopPropagation(); selectOTool(tool.id); });
+  hit.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    const start = screenPointToImagePixel({ x: e.clientX, y: e.clientY });
+    if (!start) return;
+    oSelected = tool.id;
+    oDrag = { kind: 'three-point-line', toolId: tool.id, start,
+      points: tool.points.map(point => ({ ...point })) };
+    renderOAll();
+  });
+  g.appendChild(hit);
   g.appendChild(ns('polyline', {
     points: screenPoints.map(point => `${point.x},${point.y}`).join(' '),
     fill: 'none', stroke: color, 'stroke-width': straight ? 3 : 2, 'pointer-events': 'none'
@@ -1196,6 +1222,12 @@ function renderOThreePointLine(tool) {
     const ep = ns('circle', { cx: point.x, cy: point.y, r: 6, fill: color,
       stroke: '#111', 'stroke-width': 1.5, cursor: 'pointer', 'pointer-events': 'all' });
     ep.addEventListener('click', (e) => { e.stopPropagation(); selectOTool(tool.id); });
+    ep.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      oSelected = tool.id;
+      oDrag = { kind: 'three-point-node', toolId: tool.id, idx: index };
+      renderOAll();
+    });
     g.appendChild(ep);
   });
   const label = ns('text', { x: screenPoints[1].x + 9, y: screenPoints[1].y - 9,
@@ -1204,6 +1236,11 @@ function renderOThreePointLine(tool) {
     ? `Straight · 100.0%`
     : `Straightness ${Math.max(0, 100 - deviationPercent).toFixed(1)}%`;
   g.appendChild(label);
+  if (oSelected === tool.id) {
+    const mx = screenPoints.reduce((sum, point) => sum + point.x, 0) / screenPoints.length;
+    const my = screenPoints.reduce((sum, point) => sum + point.y, 0) / screenPoints.length;
+    g.appendChild(makeORemoveBtn(mx, my, tool.id));
+  }
   overlaySvg.appendChild(g);
 }
 
