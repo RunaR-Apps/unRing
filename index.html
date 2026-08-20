@@ -335,6 +335,15 @@
       opacity: 0.7;
     }
 
+    .straightness-label {
+      font-size: 11px;
+      font-weight: 600;
+      paint-order: stroke;
+      stroke: #111;
+      stroke-width: 3px;
+      stroke-linejoin: round;
+    }
+
     .marker-grid {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -525,6 +534,10 @@
     <div class="tp-tool-row">
       <input type="color" id="line-color" value="#facc15" title="Line color">
       <button class="tool-create-btn" id="tool-line-btn">✦ Add Line</button>
+    </div>
+    <div class="tp-tool-row">
+      <input type="color" id="three-point-line-color" value="#4ade80" title="Three-point line color">
+      <button class="tool-create-btn" id="tool-three-point-line-btn">⌁ Add 3-Point Line</button>
     </div>
     <hr class="tp-sep">
     <div class="tp-title">Grid Options</div>

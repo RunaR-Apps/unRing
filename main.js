@@ -166,6 +166,7 @@ window.addEventListener('mousemove', (e) => {
   pitchValue = THREE.MathUtils.degToRad(newPitch);
   
   applyCameraRotation();
+  renderOAll();
 });
 
 canvas.style.cursor = 'grab';
@@ -200,6 +201,7 @@ canvas.addEventListener('touchmove', (e) => {
   pitchValue = THREE.MathUtils.degToRad(newPitch);
   
   applyCameraRotation();
+  renderOAll();
 }, { passive: true });
 
 // ─── Animation loop ──────────────────────────────────────────────────────────
@@ -292,6 +294,7 @@ srcFovSlider.addEventListener('input', () => {
   const v = Number(srcFovSlider.value);
   srcFovVal.textContent = roundedDegrees(v);
   buildFisheyeUVs(v);
+  renderOAll();
 });
 
 zoomSlider.addEventListener('input', () => {
@@ -299,6 +302,7 @@ zoomSlider.addEventListener('input', () => {
   zoomVal.textContent = roundedDegrees(v);
   camera.fov = v;
   camera.updateProjectionMatrix();
+  renderOAll();
 });
 
 canvas.addEventListener('wheel', (e) => {
@@ -312,6 +316,7 @@ tiltSlider.addEventListener('input', () => {
   tiltVal.textContent = roundedDegrees(v);
   tiltValue = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
+  renderOAll();
 });
 
 pitchSlider.addEventListener('input', () => {
@@ -319,6 +324,7 @@ pitchSlider.addEventListener('input', () => {
   pitchVal.textContent = roundedDegrees(v);
   pitchValue = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
+  renderOAll();
 });
 
 rollSlider.addEventListener('input', () => {
@@ -326,6 +332,7 @@ rollSlider.addEventListener('input', () => {
   rollVal.textContent = roundedDegrees(v);
   rollOffset = THREE.MathUtils.degToRad(v);
   applyCameraRotation();
+  renderOAll();
 });
 
 function setAspectFromDimensions(width, height) {
@@ -710,6 +717,7 @@ function applySettings(settings) {
     rollOffset = THREE.MathUtils.degToRad(v);
   }
   applyCameraRotation();
+  renderOAll();
 }
 
 function saveSettingsJSON() {
@@ -903,8 +911,10 @@ const overlaySvg  = document.getElementById('overlay-svg');
 const toolsBtn    = document.getElementById('tools-btn');
 const toolsPanel  = document.getElementById('tools-panel');
 const toolLineBtn = document.getElementById('tool-line-btn');
+const toolThreePointLineBtn = document.getElementById('tool-three-point-line-btn');
 const toolGridBtn      = document.getElementById('tool-grid-btn');
 const lineColorInput   = document.getElementById('line-color');
+const threePointLineColorInput = document.getElementById('three-point-line-color');
 const gridColorInput   = document.getElementById('grid-color');
 const gridHCells  = document.getElementById('grid-h-cells');
 const gridVCells  = document.getElementById('grid-v-cells');
@@ -913,8 +923,10 @@ let oTools    = [];   // [{id, type, ...data}]
 let oSelected = null; // id of selected tool
 let oMode     = null; // 'line' | 'grid' | null  (creation mode)
 let lineColor = '#facc15';
+let threePointLineColor = '#4ade80';
 let gridColor = '#22d3ee';
 lineColorInput.addEventListener('input', () => { lineColor = lineColorInput.value; });
+threePointLineColorInput.addEventListener('input', () => { threePointLineColor = threePointLineColorInput.value; });
 gridColorInput.addEventListener('input', () => { gridColor = gridColorInput.value; });
 let oDrag     = null; // active drag state
 let oIdCtr    = 0;
@@ -933,6 +945,7 @@ toolsBtn.addEventListener('click', (e) => {
   toolsBtn.classList.toggle('panel-open', open);
 });
 const toolsCloseBtn = document.getElementById('tools-close-btn');
+window.addEventListener('resize', () => renderOAll());
 toolsCloseBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   toolsPanel.classList.add('hidden');
@@ -941,19 +954,27 @@ toolsCloseBtn.addEventListener('click', (e) => {
 
 // ─── Creation mode ────────────────────────────────────────────────────────────
 function setOMode(mode) {
+  if (mode !== 'three-point-line') oPendingThreePointPixels = [];
   oMode = mode;
   overlaySvg.style.pointerEvents = mode ? 'all' : 'none';
   overlaySvg.style.cursor = mode ? 'crosshair' : '';
   toolLineBtn.classList.toggle('active-mode', mode === 'line');
+  toolThreePointLineBtn.classList.toggle('active-mode', mode === 'three-point-line');
   toolGridBtn.classList.toggle('active-mode', mode === 'grid');
 }
 
 toolLineBtn.addEventListener('click', () => setOMode(oMode === 'line' ? null : 'line'));
+toolThreePointLineBtn.addEventListener('click', () => setOMode(oMode === 'three-point-line' ? null : 'three-point-line'));
 toolGridBtn.addEventListener('click', () => setOMode(oMode === 'grid' ? null : 'grid'));
 
 // Press Escape to cancel creation mode
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && oMode) { setOMode(null); cStart = null; if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; } }
+  if (e.key === 'Escape' && oMode) {
+    setOMode(null);
+    cStart = null;
+    if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; }
+    clearPendingThreePointPreview();
+  }
 });
 
 // ─── Creation drag (mousedown on the SVG background) ─────────────────────────
@@ -965,9 +986,96 @@ function svgPt(e) {
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
 
+function screenPointToImagePixel(point) {
+  const image = seqImages[0];
+  if (!image) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) return null;
+
+  const ndcX = ((point.x - rect.left) / rect.width) * 2 - 1;
+  const ndcY = 1 - ((point.y - rect.top) / rect.height) * 2;
+  const worldRay = new THREE.Vector3(ndcX, ndcY, 0.5).unproject(camera).sub(camera.position).normalize();
+  const theta = Math.acos(Math.max(-1, Math.min(1, -worldRay.z)));
+  const halfFov = THREE.MathUtils.degToRad(Number(srcFovSlider.value) / 2);
+  const radius = (theta / halfFov) * 0.5;
+  const phi = Math.atan2(worldRay.y, worldRay.x);
+  const u = 0.5 + radius * Math.cos(phi);
+  const v = 0.5 + radius * Math.sin(phi);
+  const maxDim = Math.max(image.naturalWidth, image.naturalHeight);
+  const offsetX = (maxDim - image.naturalWidth) / 2;
+  const offsetY = (maxDim - image.naturalHeight) / 2;
+  const x = u * maxDim - offsetX;
+  const y = v * maxDim - offsetY;
+  if (x < 0 || x > image.naturalWidth || y < 0 || y > image.naturalHeight) return null;
+  return { x, y };
+}
+
+function imagePixelToScreenPoint(point) {
+  const image = seqImages[0];
+  if (!image) return null;
+  const maxDim = Math.max(image.naturalWidth, image.naturalHeight);
+  const offsetX = (maxDim - image.naturalWidth) / 2;
+  const offsetY = (maxDim - image.naturalHeight) / 2;
+  const u = (point.x + offsetX) / maxDim;
+  const v = (point.y + offsetY) / maxDim;
+  const halfFov = THREE.MathUtils.degToRad(Number(srcFovSlider.value) / 2);
+  const radius = Math.hypot(u - 0.5, v - 0.5);
+  const theta = radius / 0.5 * halfFov;
+  const phi = Math.atan2(v - 0.5, u - 0.5);
+  const worldRay = new THREE.Vector3(
+    Math.sin(theta) * Math.cos(phi),
+    Math.sin(theta) * Math.sin(phi),
+    -Math.cos(theta)
+  );
+  const projected = worldRay.project(camera);
+  if (projected.z < -1 || projected.z > 1) return null;
+  const rect = canvas.getBoundingClientRect();
+  const overlayRect = overlaySvg.getBoundingClientRect();
+  return {
+    x: rect.left + (projected.x + 1) * rect.width / 2 - overlayRect.left,
+    y: rect.top + (1 - projected.y) * rect.height / 2 - overlayRect.top
+  };
+}
+
+let oPendingThreePointPixels = [];
+
+function clearPendingThreePointPreview() {
+  overlaySvg.querySelector('[data-pending-three-point]')?.remove();
+}
+
+function renderPendingThreePointPreview() {
+  clearPendingThreePointPreview();
+  const points = oPendingThreePointPixels.map(imagePixelToScreenPoint).filter(Boolean);
+  if (!points.length) return;
+  const g = ns('g', { 'data-pending-three-point': 'true', 'pointer-events': 'none' });
+  if (points.length > 1) {
+    g.appendChild(ns('polyline', {
+      points: points.map(point => `${point.x},${point.y}`).join(' '),
+      fill: 'none', stroke: threePointLineColor, 'stroke-width': 2, 'stroke-dasharray': '5 4'
+    }));
+  }
+  points.forEach(point => g.appendChild(ns('circle', {
+    cx: point.x, cy: point.y, r: 5, fill: threePointLineColor, stroke: '#111', 'stroke-width': 1.5
+  })));
+  overlaySvg.appendChild(g);
+}
+
 overlaySvg.addEventListener('mousedown', (e) => {
   if (!oMode || e.target !== overlaySvg) return;
   e.stopPropagation();
+  if (oMode === 'three-point-line') {
+    const pixel = screenPointToImagePixel({ x: e.clientX, y: e.clientY });
+    if (!pixel) return;
+    oPendingThreePointPixels.push(pixel);
+    renderPendingThreePointPreview();
+    if (oPendingThreePointPixels.length === 3) {
+      addOThreePointLine(oPendingThreePointPixels);
+      oPendingThreePointPixels = [];
+      clearPendingThreePointPreview();
+      setOMode(null);
+    }
+    return;
+  }
   const p = svgPt(e);
   cStart = p;
   if (oMode === 'line') {
@@ -1036,6 +1144,13 @@ function addOLine(x1, y1, x2, y2) {
   selectOTool(tool.id);
 }
 
+function addOThreePointLine(points) {
+  const tool = { id: ++oIdCtr, type: 'three-point-line', points: points.map(point => ({ ...point })), color: threePointLineColor };
+  oTools.push(tool);
+  renderOTool(tool);
+  selectOTool(tool.id);
+}
+
 function addOGrid(x1, y1, x2, y2) {
   const hC = Math.max(1, parseInt(gridHCells.value) || 4);
   const vC = Math.max(1, parseInt(gridVCells.value) || 4);
@@ -1066,7 +1181,46 @@ function renderOAll() {
 function renderOTool(tool) {
   overlaySvg.querySelector(`[data-tid="${tool.id}"]`)?.remove();
   if (tool.type === 'line') renderOLine(tool);
+  else if (tool.type === 'three-point-line') renderOThreePointLine(tool);
   else                       renderOGrid(tool);
+}
+
+function calculateThreePointStraightness(points) {
+  const [start, middle, end] = points;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  const deviation = Math.abs(dy * middle.x - dx * middle.y + end.x * start.y - end.y * start.x) / length;
+  const deviationPercent = deviation / length * 100;
+  return {
+    deviationPercent,
+    straight: deviationPercent <= 1
+  };
+}
+
+function renderOThreePointLine(tool) {
+  const screenPoints = tool.points.map(imagePixelToScreenPoint);
+  if (screenPoints.some(point => !point)) return;
+  const { deviationPercent, straight } = calculateThreePointStraightness(screenPoints);
+  const color = straight ? '#4ade80' : (tool.color || '#4ade80');
+  const g = ns('g', { 'data-tid': tool.id });
+  g.appendChild(ns('polyline', {
+    points: screenPoints.map(point => `${point.x},${point.y}`).join(' '),
+    fill: 'none', stroke: color, 'stroke-width': straight ? 3 : 2, 'pointer-events': 'none'
+  }));
+  screenPoints.forEach((point, index) => {
+    const ep = ns('circle', { cx: point.x, cy: point.y, r: 6, fill: color,
+      stroke: '#111', 'stroke-width': 1.5, cursor: 'pointer', 'pointer-events': 'all' });
+    ep.addEventListener('click', (e) => { e.stopPropagation(); selectOTool(tool.id); });
+    g.appendChild(ep);
+  });
+  const label = ns('text', { x: screenPoints[1].x + 9, y: screenPoints[1].y - 9,
+    fill: color, class: 'straightness-label' });
+  label.textContent = straight
+    ? `Straight · 100.0%`
+    : `Straightness ${Math.max(0, 100 - deviationPercent).toFixed(1)}%`;
+  g.appendChild(label);
+  overlaySvg.appendChild(g);
 }
 
 // ─── Line rendering ───────────────────────────────────────────────────────────
