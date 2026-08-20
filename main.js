@@ -67,6 +67,11 @@ let seqIndex   = 0;    // current frame index (0-based)
 let seqPlaying = false;
 let seqLastMs  = 0;    // timestamp of last frame advance (ms)
 let sourceName = '';
+let renderRequested = true;
+
+function requestRender() {
+  renderRequested = true;
+}
 
 function buildSphere(tex) {
   if (sphereMesh) {
@@ -217,7 +222,11 @@ function tick(ts) {
       updateSeqSeek();
     }
   }
-  renderer.render(scene, camera);
+  // Avoid spending a GPU render every idle animation frame; at 60 Hz this cuts idle renders from ~60/s to 0.
+  if (renderRequested) {
+    renderer.render(scene, camera);
+    renderRequested = false;
+  }
 }
 requestAnimationFrame(tick);
 
@@ -418,6 +427,7 @@ function drawSeqFrame(index) {
   paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
   paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
   if (imageTexture) imageTexture.needsUpdate = true;
+  requestRender();
 }
 
 function updateSeqSeek() {
@@ -1221,6 +1231,7 @@ overlaySvg.addEventListener('click', (e) => { if (e.target === overlaySvg) desel
 
 // ─── Render ───────────────────────────────────────────────────────────────────
 function renderOAll() {
+  requestRender();
   overlaySvg.querySelectorAll('[data-tid]').forEach(el => el.remove());
   oTools.forEach(renderOTool);
 }
