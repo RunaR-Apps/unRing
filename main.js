@@ -685,37 +685,58 @@ function getSettings() {
   };
 }
 
+// Security: validate imported setting values are finite numbers within slider bounds.
+// Rejects NaN, Infinity, and out-of-range values to prevent corrupted internal state.
+function parseNumSetting(val, slider) {
+  const n = Number(val);
+  if (!isFinite(n)) return null;
+  const min = Number(slider.min);
+  const max = Number(slider.max);
+  if (!isFinite(min) || !isFinite(max)) return null;
+  return Math.min(max, Math.max(min, n));
+}
+
 function applySettings(settings) {
   if (settings.srcFov !== undefined) {
-    srcFovSlider.value = settings.srcFov;
-    const v = Number(srcFovSlider.value);
-    srcFovVal.textContent = roundedDegrees(v);
-    buildFisheyeUVs(v);
+    const v = parseNumSetting(settings.srcFov, srcFovSlider);
+    if (v !== null) {
+      srcFovSlider.value = v;
+      srcFovVal.textContent = roundedDegrees(v);
+      buildFisheyeUVs(v);
+    }
   }
   if (settings.zoom !== undefined) {
-    zoomSlider.value = settings.zoom;
-    const v = Number(zoomSlider.value);
-    zoomVal.textContent = roundedDegrees(v);
-    camera.fov = v;
-    camera.updateProjectionMatrix();
+    const v = parseNumSetting(settings.zoom, zoomSlider);
+    if (v !== null) {
+      zoomSlider.value = v;
+      zoomVal.textContent = roundedDegrees(v);
+      camera.fov = v;
+      camera.updateProjectionMatrix();
+    }
   }
   if (settings.tilt !== undefined) {
-    tiltSlider.value = settings.tilt;
-    const v = Number(tiltSlider.value);
-    tiltVal.textContent = roundedDegrees(v);
-    tiltValue = THREE.MathUtils.degToRad(v);
+    const v = parseNumSetting(settings.tilt, tiltSlider);
+    if (v !== null) {
+      tiltSlider.value = v;
+      tiltVal.textContent = roundedDegrees(v);
+      tiltValue = THREE.MathUtils.degToRad(v);
+    }
   }
   if (settings.pitch !== undefined) {
-    pitchSlider.value = settings.pitch;
-    const v = Number(pitchSlider.value);
-    pitchVal.textContent = roundedDegrees(v);
-    pitchValue = THREE.MathUtils.degToRad(v);
+    const v = parseNumSetting(settings.pitch, pitchSlider);
+    if (v !== null) {
+      pitchSlider.value = v;
+      pitchVal.textContent = roundedDegrees(v);
+      pitchValue = THREE.MathUtils.degToRad(v);
+    }
   }
   if (settings.roll !== undefined) {
-    rollSlider.value = settings.roll;
-    const v = Number(rollSlider.value);
-    rollVal.textContent = roundedDegrees(v);
-    rollOffset = THREE.MathUtils.degToRad(v);
+    const v = parseNumSetting(settings.roll, rollSlider);
+    if (v !== null) {
+      rollSlider.value = v;
+      rollVal.textContent = roundedDegrees(v);
+      rollOffset = THREE.MathUtils.degToRad(v);
+    }
   }
   applyCameraRotation();
   renderOAll();
@@ -852,7 +873,7 @@ settingsInput.addEventListener('change', () => {
         const settings = JSON.parse(e.target.result);
         applySettings(settings);
       } catch (err) {
-        alert('Failed to load settings: ' + err.message);
+        alert('Failed to load settings: invalid or malformed JSON file.');
       }
     };
     reader.readAsText(file);
