@@ -910,10 +910,8 @@ function handleDroppedFiles(files) {
 const overlaySvg  = document.getElementById('overlay-svg');
 const toolsBtn    = document.getElementById('tools-btn');
 const toolsPanel  = document.getElementById('tools-panel');
-const toolLineBtn = document.getElementById('tool-line-btn');
 const toolThreePointLineBtn = document.getElementById('tool-three-point-line-btn');
 const toolGridBtn      = document.getElementById('tool-grid-btn');
-const lineColorInput   = document.getElementById('line-color');
 const threePointLineColorInput = document.getElementById('three-point-line-color');
 const gridColorInput   = document.getElementById('grid-color');
 const gridHCells  = document.getElementById('grid-h-cells');
@@ -921,11 +919,9 @@ const gridVCells  = document.getElementById('grid-v-cells');
 
 let oTools    = [];   // [{id, type, ...data}]
 let oSelected = null; // id of selected tool
-let oMode     = null; // 'line' | 'grid' | null  (creation mode)
-let lineColor = '#facc15';
+let oMode     = null; // 'grid' | null  (creation mode)
 let threePointLineColor = '#4ade80';
 let gridColor = '#22d3ee';
-lineColorInput.addEventListener('input', () => { lineColor = lineColorInput.value; });
 threePointLineColorInput.addEventListener('input', () => { threePointLineColor = threePointLineColorInput.value; });
 gridColorInput.addEventListener('input', () => { gridColor = gridColorInput.value; });
 let oDrag     = null; // active drag state
@@ -958,12 +954,10 @@ function setOMode(mode) {
   oMode = mode;
   overlaySvg.style.pointerEvents = mode ? 'all' : 'none';
   overlaySvg.style.cursor = mode ? 'crosshair' : '';
-  toolLineBtn.classList.toggle('active-mode', mode === 'line');
   toolThreePointLineBtn.classList.toggle('active-mode', mode === 'three-point-line');
   toolGridBtn.classList.toggle('active-mode', mode === 'grid');
 }
 
-toolLineBtn.addEventListener('click', () => setOMode(oMode === 'line' ? null : 'line'));
 toolThreePointLineBtn.addEventListener('click', () => setOMode(oMode === 'three-point-line' ? null : 'three-point-line'));
 toolGridBtn.addEventListener('click', () => setOMode(oMode === 'grid' ? null : 'grid'));
 
@@ -1078,28 +1072,18 @@ overlaySvg.addEventListener('mousedown', (e) => {
   }
   const p = svgPt(e);
   cStart = p;
-  if (oMode === 'line') {
-    cPrev = ns('line', { x1: p.x, y1: p.y, x2: p.x, y2: p.y,
-      stroke: lineColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
-  } else {
-    cPrev = ns('rect', { x: p.x, y: p.y, width: 0, height: 0,
-      fill: 'none', stroke: gridColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
-  }
+  cPrev = ns('rect', { x: p.x, y: p.y, width: 0, height: 0,
+    fill: 'none', stroke: gridColor, 'stroke-width': 2, 'stroke-dasharray': '5 4', 'pointer-events': 'none' });
   overlaySvg.appendChild(cPrev);
 });
 
 window.addEventListener('mousemove', (e) => {
   if (cStart && cPrev) {
     const p = svgPt(e);
-    if (oMode === 'line') {
-      cPrev.setAttribute('x2', p.x);
-      cPrev.setAttribute('y2', p.y);
-    } else {
-      const x = Math.min(cStart.x, p.x), y = Math.min(cStart.y, p.y);
-      cPrev.setAttribute('x', x); cPrev.setAttribute('y', y);
-      cPrev.setAttribute('width',  Math.abs(p.x - cStart.x));
-      cPrev.setAttribute('height', Math.abs(p.y - cStart.y));
-    }
+    const x = Math.min(cStart.x, p.x), y = Math.min(cStart.y, p.y);
+    cPrev.setAttribute('x', x); cPrev.setAttribute('y', y);
+    cPrev.setAttribute('width',  Math.abs(p.x - cStart.x));
+    cPrev.setAttribute('height', Math.abs(p.y - cStart.y));
   }
   if (oDrag) handleODrag(e);
 });
@@ -1109,12 +1093,8 @@ window.addEventListener('mouseup', (e) => {
     const p = svgPt(e);
     if (cPrev) { overlaySvg.removeChild(cPrev); cPrev = null; }
     if (Math.hypot(p.x - cStart.x, p.y - cStart.y) > 8) {
-      if (oMode === 'line') {
-        addOLine(cStart.x, cStart.y, p.x, p.y);
-      } else {
-        addOGrid(Math.min(cStart.x, p.x), Math.min(cStart.y, p.y),
-                 Math.max(cStart.x, p.x), Math.max(cStart.y, p.y));
-      }
+      addOGrid(Math.min(cStart.x, p.x), Math.min(cStart.y, p.y),
+               Math.max(cStart.x, p.x), Math.max(cStart.y, p.y));
     }
     cStart = null;
     setOMode(null);
