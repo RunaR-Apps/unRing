@@ -527,12 +527,10 @@ function updateSeqSeek() {
 }
 
 function setTransportMode(mode) {
-  const volRow = document.getElementById('volume-row');
   const sequence = mode === 'sequence';
   playPauseBtn.style.display = sequence ? '' : 'none';
   seekSlider.style.display = sequence ? '' : 'none';
   timeLabel.style.display = sequence ? '' : 'none';
-  volRow.style.display = 'none';
 }
 
 function loadImageFile(file) {
