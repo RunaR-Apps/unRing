@@ -31,14 +31,40 @@ const exportStatus  = document.getElementById('export-status');
 const importSettingsBtn = document.getElementById('import-settings-btn');
 const exportSettingsBtn = document.getElementById('export-settings-btn');
 const settingsInput = document.getElementById('settings-input');
+const rendererStatus = document.getElementById('renderer-status');
 
 const DEFAULT_FPS = 25;
 
 // ─── Three.js setup ──────────────────────────────────────────────────────────
 // preserveDrawingBuffer is required for canvas.toDataURL() and gl.readPixels()
 // to work correctly outside of the rAF loop.
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+let renderer;
+let softwareRendering = false;
+let softwareSourceData = null;
+let softwareSourceWidth = 0;
+let softwareSourceHeight = 0;
+
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+} catch (error) {
+  softwareRendering = true;
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw error;
+
+  renderer = {
+    setSize(width, height) {
+      const scale = Math.min(window.devicePixelRatio || 1, 1);
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+    },
+    render() {
+      renderSoftwareFrame(context);
+    }
+  };
+  rendererStatus.textContent = 'Software renderer';
+  rendererStatus.title = 'WebGL is unavailable; rendering is performed on the CPU.';
+}
 
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
@@ -82,6 +108,67 @@ function buildSphere(tex) {
   const material = new THREE.MeshBasicMaterial({ map: tex });
   sphereMesh = new THREE.Mesh(geometry, material);
   scene.add(sphereMesh);
+}
+
+function updateSoftwareSource() {
+  if (!softwareRendering || !paddedCanvasCtx || !paddedCanvas) return;
+  softwareSourceWidth = paddedCanvas.width;
+  softwareSourceHeight = paddedCanvas.height;
+  softwareSourceData = paddedCanvasCtx.getImageData(0, 0, softwareSourceWidth, softwareSourceHeight).data;
+}
+
+function rotateByQuaternion(x, y, z, q) {
+  const tx = 2 * (q.y * z - q.z * y);
+  const ty = 2 * (q.z * x - q.x * z);
+  const tz = 2 * (q.x * y - q.y * x);
+  return {
+    x: x + q.w * tx + q.y * tz - q.z * ty,
+    y: y + q.w * ty + q.z * tx - q.x * tz,
+    z: z + q.w * tz + q.x * ty - q.y * tx
+  };
+}
+
+function renderSoftwareFrame(context) {
+  const width = canvas.width;
+  const height = canvas.height;
+  const output = context.createImageData(width, height);
+  const pixels = output.data;
+  const aspect = width / height;
+  const halfFov = THREE.MathUtils.degToRad(camera.fov) / 2;
+  const tanHalfFov = Math.tan(halfFov);
+  const sourceHalfFov = THREE.MathUtils.degToRad(Number(srcFovSlider.value)) / 2;
+  const quaternion = camera.quaternion;
+
+  for (let y = 0; y < height; y++) {
+    const ndcY = 1 - ((y + 0.5) / height) * 2;
+    for (let x = 0; x < width; x++) {
+      const ndcX = ((x + 0.5) / width) * 2 - 1;
+      const ray = rotateByQuaternion(ndcX * aspect * tanHalfFov, ndcY * tanHalfFov, -1, quaternion);
+      const length = Math.hypot(ray.x, ray.y, ray.z) || 1;
+      const dx = ray.x / length;
+      const dy = ray.y / length;
+      const dz = ray.z / length;
+      const theta = Math.acos(Math.max(-1, Math.min(1, -dz)));
+      const radius = (theta / sourceHalfFov) * 0.5;
+      const phi = Math.atan2(dy, dx);
+      const sourceX = (0.5 + radius * Math.cos(phi)) * softwareSourceWidth;
+      const sourceY = (0.5 - radius * Math.sin(phi)) * softwareSourceHeight;
+      const outputIndex = (y * width + x) * 4;
+
+      if (!softwareSourceData || radius > 0.5 || sourceX < 0 || sourceY < 0 ||
+          sourceX >= softwareSourceWidth || sourceY >= softwareSourceHeight) {
+        pixels[outputIndex + 3] = 255;
+        continue;
+      }
+
+      const sourceIndex = (Math.floor(sourceY) * softwareSourceWidth + Math.floor(sourceX)) * 4;
+      pixels[outputIndex] = softwareSourceData[sourceIndex];
+      pixels[outputIndex + 1] = softwareSourceData[sourceIndex + 1];
+      pixels[outputIndex + 2] = softwareSourceData[sourceIndex + 2];
+      pixels[outputIndex + 3] = 255;
+    }
+  }
+  context.putImageData(output, 0, 0);
 }
 
 // ─── Resize ───────────────────────────────────────────────────────────────────
@@ -426,6 +513,7 @@ function drawSeqFrame(index) {
   paddedCanvasCtx.fillStyle = '#000000';
   paddedCanvasCtx.fillRect(0, 0, maxDim, maxDim);
   paddedCanvasCtx.drawImage(img, (maxDim - w) / 2, (maxDim - h) / 2, w, h);
+  updateSoftwareSource();
   if (imageTexture) imageTexture.needsUpdate = true;
   requestRender();
 }

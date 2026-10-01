@@ -71,6 +71,12 @@
       text-overflow: ellipsis;
     }
 
+    #renderer-status {
+      font-size: 0.72rem;
+      color: #d9a441;
+      white-space: nowrap;
+    }
+
     #viewport {
       flex: 1;
       position: relative;
@@ -452,6 +458,7 @@
     <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif" multiple />
     <input type="file" id="settings-input" accept=".json" style="display:none;" />
     <span id="filename">No file loaded</span>
+    <span id="renderer-status" aria-live="polite"></span>
   </header>
 
   <div id="main-area">
