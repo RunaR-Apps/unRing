@@ -417,13 +417,32 @@
       border-color: #1a73e8;
       color: #6ab0ff;
     }
+    .tool-create-btn svg {
+      width: 16px;
+      height: 16px;
+      margin-right: 4px;
+      vertical-align: -3px;
+      fill: none;
+      stroke: currentColor;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 2;
+    }
+    .tool-create-btn svg .point { fill: currentColor; stroke: none; }
 
     .tp-tool-row {
       display: flex;
       align-items: center;
       gap: 6px;
+      margin-bottom: 8px;
     }
     .tp-tool-row .tool-create-btn { flex: 1; }
+    #tool-three-point-line-btn {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: #fff;
+    }
+    #tool-three-point-line-btn:hover { background: #1558b0; }
     .tp-tool-row input[type=color] {
       width: 28px;
       height: 28px;
@@ -560,8 +579,8 @@
       <div id="tools-panel" class="sidebar-section">
         <h2>Overlay Tools</h2>
         <div class="tp-tool-row">
+          <button class="tool-create-btn" id="tool-three-point-line-btn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15 12 9 20 15" /><circle class="point" cx="4" cy="15" r="2" /><circle class="point" cx="12" cy="9" r="2" /><circle class="point" cx="20" cy="15" r="2" /></svg>Add 3-Point Line</button>
           <input type="color" id="three-point-line-color" value="#4ade80" title="Three-point line color">
-          <button class="tool-create-btn" id="tool-three-point-line-btn">⌁ Add 3-Point Line</button>
         </div>
         <button class="full-btn primary" id="optimize-fov-btn" title="Add 2 or more lines to enable automatic optimization of source FOV." disabled>Optimize Source FOV</button>
       </div>
