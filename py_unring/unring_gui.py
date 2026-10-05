@@ -25,11 +25,18 @@ from PyQt6.QtWidgets import (
     QFormLayout, QToolBar, QMessageBox,
 )
 
-from engine import (
-    IMAGE_EXTENSIONS, open_image, image_info,
-    build_camera_matrix, build_distortion_coeffs,
-    build_remap, undistort_frame,
-)
+try:
+    from .engine import (
+        IMAGE_EXTENSIONS, open_image, image_info,
+        build_camera_matrix, build_distortion_coeffs,
+        build_remap, undistort_frame,
+    )
+except ImportError:
+    from engine import (
+        IMAGE_EXTENSIONS, open_image, image_info,
+        build_camera_matrix, build_distortion_coeffs,
+        build_remap, undistort_frame,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +80,7 @@ class ExportWorker(QObject):
         total = len(self.image_paths)
         digits = max(4, len(str(total)))
         idx = 0
+        written_files = []
         while not self._cancel:
             if idx >= total:
                 break
@@ -84,17 +92,18 @@ class ExportWorker(QObject):
             if not cv2.imwrite(destination, result):
                 self.finished.emit(False, f"Cannot write: {destination}")
                 return
+            written_files.append(destination)
             idx += 1
             pct = min(int(idx / max(total, 1) * 100), 100)
             self.progress.emit(pct)
 
         if self._cancel:
-            try:
-                for name in os.listdir(self.output_dir):
-                    if name.startswith("unring-") and name.endswith(".png"):
-                        os.remove(os.path.join(self.output_dir, name))
-            except OSError:
-                pass
+            for filepath in written_files:
+                try:
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+                except OSError:
+                    pass
             self.finished.emit(False, "Export cancelled.")
         else:
             self.finished.emit(True, f"Saved {total} PNG images to {self.output_dir}")

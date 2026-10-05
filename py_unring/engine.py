@@ -33,6 +33,11 @@ def build_camera_matrix(width: int, height: int, fov_deg: float) -> np.ndarray:
     -------
     K : (3, 3) float64 ndarray
     """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Image dimensions must be positive, got {width}x{height}")
+    if not (0.0 < float(fov_deg) < 360.0):
+        raise ValueError(f"FOV must be between 0 and 360 degrees, got {fov_deg}")
+
     fov_rad = math.radians(fov_deg)
     # Use the shorter dimension so the fisheye circle is fully covered
     min_dim = min(width, height)
@@ -93,10 +98,12 @@ def build_remap(width: int, height: int,
     dim_src = (width, height)
     dim_dst = (out_width, out_height)
 
+    clamped_balance = max(0.0, min(1.0, float(balance)))
+
     # Estimate the undistorted (new) camera matrix for the output view
     K_new = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(
         K, D, dim_src, np.eye(3),
-        balance=balance,
+        balance=clamped_balance,
         new_size=dim_dst,
         fov_scale=1.0
     )

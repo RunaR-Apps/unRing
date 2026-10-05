@@ -7,11 +7,18 @@ import sys
 
 import cv2
 
-from engine import (
-    IMAGE_EXTENSIONS, open_image, image_info,
-    build_camera_matrix, build_distortion_coeffs,
-    build_remap, undistort_frame,
-)
+try:
+    from .engine import (
+        IMAGE_EXTENSIONS, open_image, image_info,
+        build_camera_matrix, build_distortion_coeffs,
+        build_remap, undistort_frame,
+    )
+except ImportError:
+    from engine import (
+        IMAGE_EXTENSIONS, open_image, image_info,
+        build_camera_matrix, build_distortion_coeffs,
+        build_remap, undistort_frame,
+    )
 
 
 def natural_key(path: str):

@@ -472,6 +472,8 @@ seekSlider.addEventListener('input', () => {
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
 const MAX_SEQUENCE_FILES = 300;
 const MAX_IMAGE_PIXELS = 100_000_000;
+const MAX_IMAGE_DIMENSION = 8192;
+const MAX_SEQUENCE_TOTAL_PIXELS = 300_000_000;
 
 function isImageFile(file) {
   return /\.(jpe?g|png|gif|webp|bmp|tiff?)$/i.test(file.name) ||
@@ -541,15 +543,15 @@ function loadImageFile(file) {
   seqUrls.push(url);
   const img = new Image();
   img.onload = () => {
-    if (img.naturalWidth * img.naturalHeight > MAX_IMAGE_PIXELS) {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (w * h > MAX_IMAGE_PIXELS || w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
       cleanupSeq();
       sourceMode = 'none';
       alert('Image dimensions are too large to process safely.');
       return;
     }
     seqImages = [img];
-    const w = img.naturalWidth;
-    const h = img.naturalHeight;
     const maxDim = Math.max(w, h);
     paddedCanvas = document.createElement('canvas');
     paddedCanvas.width = maxDim;
@@ -590,26 +592,37 @@ function loadImageSequence(files) {
   );
   let loaded = 0;
   let failed = 0;
+  let totalPixels = 0;
+  let dimensionError = false;
   seqImages = new Array(sorted.length);
   sorted.forEach((file, index) => {
     const url = URL.createObjectURL(file);
     seqUrls.push(url);
     const img = new Image();
     img.onload = () => {
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      if (w * h > MAX_IMAGE_PIXELS || w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION) {
+        dimensionError = true;
+      }
+      totalPixels += (w * h);
+      if (totalPixels > MAX_SEQUENCE_TOTAL_PIXELS) {
+        dimensionError = true;
+      }
       seqImages[index] = img;
       loaded++;
-      if (loaded === sorted.length) onSeqLoaded(failed);
+      if (loaded === sorted.length) onSeqLoaded(failed, dimensionError);
     };
     img.onerror = () => {
       failed++;
       loaded++;
-      if (loaded === sorted.length) onSeqLoaded(failed);
+      if (loaded === sorted.length) onSeqLoaded(failed, dimensionError);
     };
     img.src = url;
   });
 }
 
-function onSeqLoaded(failed) {
+function onSeqLoaded(failed, dimensionError = false) {
   seqIndex  = 0;
   seqPlaying = false;
   playPauseBtn.textContent = '▶';
@@ -622,11 +635,15 @@ function onSeqLoaded(failed) {
     return;
   }
 
-  if (seqImages.some(frame => frame.naturalWidth * frame.naturalHeight > MAX_IMAGE_PIXELS)) {
+  if (dimensionError || seqImages.some(frame =>
+    frame.naturalWidth * frame.naturalHeight > MAX_IMAGE_PIXELS ||
+    frame.naturalWidth > MAX_IMAGE_DIMENSION ||
+    frame.naturalHeight > MAX_IMAGE_DIMENSION
+  )) {
     cleanupSeq();
     sourceMode = 'none';
     updateExportBtnState();
-    alert('An image is too large to process safely.');
+    alert('One or more sequence images exceed safe dimension or memory limits.');
     return;
   }
 
@@ -823,6 +840,9 @@ function parseNumSetting(val, slider) {
 }
 
 function applySettings(settings) {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('Settings payload must be a JSON object.');
+  }
   if (settings.srcFov !== undefined) {
     const v = parseNumSetting(settings.srcFov, srcFovSlider);
     if (v !== null) {
@@ -914,7 +934,8 @@ saveStillBtn.addEventListener('click', async () => {
   if (!imageTexture) return;
   try {
     const blob = await renderCurrentFrame();
-    const base = sourceName.replace(/\.[^.]+$/, '') || 'unring';
+    const sanitizedName = sourceName.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '').replace(/[/\\?%*:|"<>]/g, '_');
+    const base = sanitizedName || 'unring';
     downloadBlob(blob, `${base}-unring.png`);
     exportStatus.textContent = 'Saved corrected image';
   } catch (err) {
@@ -990,10 +1011,16 @@ fileInput.addEventListener('change', () => {
 });
 
 // ─── Import Settings ──────────────────────────────────────────────────────────
+const MAX_SETTINGS_BYTES = 1024 * 1024; // 1 MB
 importSettingsBtn.addEventListener('click', () => settingsInput.click());
 settingsInput.addEventListener('change', () => {
   if (settingsInput.files.length) {
     const file = settingsInput.files[0];
+    if (file.size > MAX_SETTINGS_BYTES) {
+      alert('Settings file is too large.');
+      settingsInput.value = '';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
