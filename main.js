@@ -78,8 +78,31 @@ try {
 }
 
 const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 100);
 camera.position.set(0, 0, 0);
+
+let currentImageWidth = 0;
+let currentImageHeight = 0;
+const imageBoundsUniform = { value: new THREE.Vector4(0, 0, 1, 1) };
+
+function updateImageBounds(w, h) {
+  if (!w || !h) {
+    currentImageWidth = 0;
+    currentImageHeight = 0;
+    imageBoundsUniform.value.set(0, 0, 1, 1);
+    return;
+  }
+  currentImageWidth = w;
+  currentImageHeight = h;
+  const maxDim = Math.max(w, h);
+  const uMin = (maxDim - w) / (2 * maxDim);
+  const uMax = (maxDim + w) / (2 * maxDim);
+  const vMin = (maxDim - h) / (2 * maxDim);
+  const vMax = (maxDim + h) / (2 * maxDim);
+  imageBoundsUniform.value.set(uMin, vMin, uMax, vMax);
+  requestRender();
+}
 
 // High-density sphere – camera sits at the origin and looks at the interior.
 // Flipping X normals so the texture is visible from inside.
@@ -118,6 +141,27 @@ function buildSphere(tex) {
   }
 
   const material = new THREE.MeshBasicMaterial({ map: tex });
+  material.customProgramCacheKey = () => 'unring_image_bounds';
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uImageBounds = imageBoundsUniform;
+    shader.fragmentShader = 'uniform vec4 uImageBounds;\n' + shader.fragmentShader;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <map_fragment>',
+      `
+      #ifdef USE_MAP
+        vec4 sampledDiffuseColor = vec4(0.0, 0.0, 0.0, 1.0);
+        if (vMapUv.x >= uImageBounds.x && vMapUv.x <= uImageBounds.z &&
+            vMapUv.y >= uImageBounds.y && vMapUv.y <= uImageBounds.w) {
+          sampledDiffuseColor = texture2D(map, vMapUv);
+        }
+        #ifdef DECODE_VIDEO_TEXTURE
+          sampledDiffuseColor = vec4(mix(pow(sampledDiffuseColor.rgb * 0.9478672986 + vec3(0.0521327014), vec3(2.4)), sampledDiffuseColor.rgb * 0.0773993808, vec3(lessThanEqual(sampledDiffuseColor.rgb, vec3(0.04045)))), sampledDiffuseColor.w);
+        #endif
+        diffuseColor *= sampledDiffuseColor;
+      #endif
+      `
+    );
+  };
   sphereMesh = new THREE.Mesh(geometry, material);
   scene.add(sphereMesh);
 }
@@ -165,10 +209,19 @@ function renderSoftwareFrame(context) {
       const phi = Math.atan2(dy, dx);
       const sourceX = (0.5 + radius * Math.cos(phi)) * softwareSourceWidth;
       const sourceY = (0.5 - radius * Math.sin(phi)) * softwareSourceHeight;
-      const outputIndex = (y * width + x) * 4;
+      const imgX0 = (softwareSourceWidth - currentImageWidth) / 2;
+      const imgX1 = imgX0 + currentImageWidth;
+      const imgY0 = (softwareSourceHeight - currentImageHeight) / 2;
+      const imgY1 = imgY0 + currentImageHeight;
 
-      if (!softwareSourceData || radius > 0.5 || sourceX < 0 || sourceY < 0 ||
+      if (!softwareSourceData || radius > 0.5 ||
+          sourceX < imgX0 || sourceY < imgY0 ||
+          sourceX >= imgX1 || sourceY >= imgY1 ||
+          sourceX < 0 || sourceY < 0 ||
           sourceX >= softwareSourceWidth || sourceY >= softwareSourceHeight) {
+        pixels[outputIndex] = 0;
+        pixels[outputIndex + 1] = 0;
+        pixels[outputIndex + 2] = 0;
         pixels[outputIndex + 3] = 255;
         continue;
       }
@@ -519,6 +572,7 @@ function cleanupSeq() {
   seqFiles = [];
   seqIndex = 0;
   seqPlaying = false;
+  updateImageBounds(0, 0);
 }
 
 function drawSeqFrame(index) {
@@ -589,6 +643,7 @@ function loadImageFile(file) {
     drawSeqFrame(0);
     buildFisheyeUVs(Number(srcFovSlider.value));
     setAspectFromDimensions(w, h);
+    updateImageBounds(w, h);
     processImageMetadata(file, w, h);
     sourceMonitor.innerHTML = '';
     const imgEl = new Image();
@@ -692,6 +747,7 @@ function onSeqLoaded(failed, dimensionError = false) {
   drawSeqFrame(0);
   buildFisheyeUVs(Number(srcFovSlider.value));
   setAspectFromDimensions(w, h);
+  updateImageBounds(w, h);
   if (seqFiles.length > 0) {
     processImageMetadata(seqFiles[0], w, h);
   }
