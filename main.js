@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { extractExif, calculateLensFov } from './exif-parser.js';
 
 // ─── DOM refs ────────────────────────────────────────────────────────────────
 const canvas        = document.getElementById('canvas');
@@ -32,6 +33,16 @@ const importSettingsBtn = document.getElementById('import-settings-btn');
 const exportSettingsBtn = document.getElementById('export-settings-btn');
 const settingsInput = document.getElementById('settings-input');
 const rendererStatus = document.getElementById('renderer-status');
+const helpBtn        = document.getElementById('help-btn');
+const helpModal      = document.getElementById('help-modal');
+const helpModalClose = document.getElementById('help-modal-close');
+const helpModalOkBtn = document.getElementById('help-modal-ok-btn');
+const imgInfoBtn     = document.getElementById('img-info-btn');
+const imgInfoBadge   = document.getElementById('img-info-badge');
+const imgInfoPanel   = document.getElementById('img-info-panel');
+const imgInfoClose   = document.getElementById('img-info-close');
+const imgInfoContent = document.getElementById('img-info-content');
+let currentImageMeta = null;
 
 const DEFAULT_FPS = 25;
 
@@ -89,6 +100,7 @@ let sourceMode = 'none';
 // Image / image-sequence state
 let seqUrls    = [];   // Blob URLs (for revokeObjectURL on cleanup)
 let seqImages  = [];   // HTMLImageElement array (one per frame)
+let seqFiles   = [];   // File objects (for EXIF and metadata)
 let seqIndex   = 0;    // current frame index (0-based)
 let seqPlaying = false;
 let seqLastMs  = 0;    // timestamp of last frame advance (ms)
@@ -438,16 +450,24 @@ function setAspectFromDimensions(width, height) {
   resize();
 }
 
-// ─── Space bar: play / pause ────────────────────────────────────────────────
+// ─── Keyboard shortcuts ──────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
-  if (e.code !== 'Space') return;
   // Ignore if the user is typing in an input/select
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-  e.preventDefault();
-  if (sourceMode === 'sequence') {
-    seqPlaying = !seqPlaying;
-    playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
-    seqLastMs = 0;
+
+  if ((e.key === '?' || e.key === 'h' || e.key === 'H') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    e.preventDefault();
+    toggleHelpModal();
+    return;
+  }
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (sourceMode === 'sequence') {
+      seqPlaying = !seqPlaying;
+      playPauseBtn.textContent = seqPlaying ? '⏸' : '▶';
+      seqLastMs = 0;
+    }
   }
 });
 
@@ -496,6 +516,7 @@ function cleanupSeq() {
   seqUrls.forEach(url => URL.revokeObjectURL(url));
   seqUrls = [];
   seqImages = [];
+  seqFiles = [];
   seqIndex = 0;
   seqPlaying = false;
 }
@@ -568,6 +589,7 @@ function loadImageFile(file) {
     drawSeqFrame(0);
     buildFisheyeUVs(Number(srcFovSlider.value));
     setAspectFromDimensions(w, h);
+    processImageMetadata(file, w, h);
     sourceMonitor.innerHTML = '';
     const imgEl = new Image();
     imgEl.src = url;
@@ -590,6 +612,7 @@ function loadImageSequence(files) {
   const sorted = Array.from(files).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   );
+  seqFiles = sorted;
   let loaded = 0;
   let failed = 0;
   let totalPixels = 0;
@@ -669,6 +692,9 @@ function onSeqLoaded(failed, dimensionError = false) {
   drawSeqFrame(0);
   buildFisheyeUVs(Number(srcFovSlider.value));
   setAspectFromDimensions(w, h);
+  if (seqFiles.length > 0) {
+    processImageMetadata(seqFiles[0], w, h);
+  }
 
   sourceMonitor.innerHTML = '';
   const imgEl = new Image();
@@ -1035,6 +1061,209 @@ settingsInput.addEventListener('change', () => {
   settingsInput.value = '';
 });
 
+// ─── Help & Shortcuts modal ──────────────────────────────────────────────────
+function openHelpModal() {
+  if (!helpModal) return;
+  helpModal.classList.remove('hidden');
+  helpBtn?.setAttribute('aria-expanded', 'true');
+  helpModalClose?.focus();
+}
+
+function closeHelpModal() {
+  if (!helpModal) return;
+  helpModal.classList.add('hidden');
+  helpBtn?.setAttribute('aria-expanded', 'false');
+  helpBtn?.focus();
+}
+
+function toggleHelpModal() {
+  if (!helpModal) return;
+  if (helpModal.classList.contains('hidden')) {
+    openHelpModal();
+  } else {
+    closeHelpModal();
+  }
+}
+
+helpBtn?.addEventListener('click', openHelpModal);
+helpModalClose?.addEventListener('click', closeHelpModal);
+helpModalOkBtn?.addEventListener('click', closeHelpModal);
+helpModal?.addEventListener('click', (e) => {
+  if (e.target === helpModal) closeHelpModal();
+});
+
+// ─── Image Information & EXIF ────────────────────────────────────────────────
+function formatFileSize(bytes) {
+  if (!bytes) return 'Unknown size';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function getAspectRatioString(w, h) {
+  if (!w || !h) return '';
+  const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+  const d = gcd(w, h);
+  const ratio = (w / h).toFixed(2);
+  const simpW = w / d;
+  const simpH = h / d;
+  if (simpW <= 20 && simpH <= 20) {
+    return `${simpW}:${simpH} (${ratio}:1)`;
+  }
+  return `${ratio}:1`;
+}
+
+function renderImageInfoPanel() {
+  if (!imgInfoContent) return;
+  if (!currentImageMeta) {
+    imgInfoContent.innerHTML = '<p class="img-info-empty">No image loaded yet.</p>';
+    return;
+  }
+
+  const { file, width, height, exif, lens } = currentImageMeta;
+  const ext = file.name.split('.').pop().toUpperCase();
+  const formatStr = file.type ? `${ext} (${file.type})` : ext;
+  const megapixels = ((width * height) / 1e6).toFixed(2);
+  const aspectStr = getAspectRatioString(width, height);
+
+  let html = `
+    <div class="img-info-grid">
+      <span class="info-lbl">File:</span>
+      <span class="info-val" title="${file.name}">${file.name}</span>
+      <span class="info-lbl">Format:</span>
+      <span class="info-val">${formatStr}</span>
+      <span class="info-lbl">Size:</span>
+      <span class="info-val">${formatFileSize(file.size)}</span>
+      <span class="info-lbl">Resolution:</span>
+      <span class="info-val">${width} × ${height} (${megapixels} MP)</span>
+      <span class="info-lbl">Aspect:</span>
+      <span class="info-val">${aspectStr}</span>
+    </div>
+  `;
+
+  if (exif && Object.keys(exif).length > 0) {
+    html += '<hr class="img-info-divider" />';
+    html += '<div class="img-info-grid">';
+
+    if (exif.Make || exif.Model) {
+      const camera = [exif.Make, exif.Model].filter(Boolean).join(' ');
+      html += `<span class="info-lbl">Camera:</span><span class="info-val">${camera}</span>`;
+    }
+    if (exif.LensModel || exif.LensMake) {
+      const lensName = [exif.LensMake, exif.LensModel].filter(Boolean).join(' ');
+      html += `<span class="info-lbl">Lens:</span><span class="info-val">${lensName}</span>`;
+    }
+    if (exif.FocalLength) {
+      const f35Str = exif.FocalLengthIn35mmFilm ? ` (35mm eq: ${exif.FocalLengthIn35mmFilm}mm)` : '';
+      html += `<span class="info-lbl">Focal Length:</span><span class="info-val">${exif.FocalLength}mm${f35Str}</span>`;
+    } else if (exif.FocalLengthIn35mmFilm) {
+      html += `<span class="info-lbl">Focal Length:</span><span class="info-val">35mm eq: ${exif.FocalLengthIn35mmFilm}mm</span>`;
+    }
+    if (lens?.sensorWidth && lens?.sensorHeight) {
+      html += `<span class="info-lbl">Sensor:</span><span class="info-val">${lens.sensorWidth.toFixed(1)} × ${lens.sensorHeight.toFixed(1)} mm</span>`;
+    }
+    if (exif.FNumber) {
+      html += `<span class="info-lbl">Aperture:</span><span class="info-val">f/${Number(exif.FNumber).toFixed(1)}</span>`;
+    }
+    if (exif.ExposureTime) {
+      const exp = Number(exif.ExposureTime);
+      const expStr = exp < 1 ? `1/${Math.round(1 / exp)}s` : `${exp}s`;
+      html += `<span class="info-lbl">Exposure:</span><span class="info-val">${expStr}</span>`;
+    }
+    if (exif.ISO) {
+      html += `<span class="info-lbl">ISO:</span><span class="info-val">${exif.ISO}</span>`;
+    }
+
+    html += '</div>';
+
+    if (lens?.calculatedFov) {
+      html += '<hr class="img-info-divider" />';
+      html += `
+        <div class="img-info-grid">
+          <span class="info-lbl">Calculated FOV:</span>
+          <span class="info-val"><strong>${lens.calculatedFov}°</strong> (${lens.fovType})</span>
+          <span class="info-lbl">Status:</span>
+          <span class="info-val"><span class="img-info-tag applied">Applied to Source FOV</span></span>
+        </div>
+        <button type="button" id="img-info-reapply-btn" class="img-info-apply-btn">Re-apply EXIF FOV (${lens.calculatedFov}°)</button>
+      `;
+    }
+  } else {
+    html += '<hr class="img-info-divider" /><p class="img-info-empty">No EXIF lens metadata found in this file.</p>';
+  }
+
+  imgInfoContent.innerHTML = html;
+
+  const reapplyBtn = document.getElementById('img-info-reapply-btn');
+  if (reapplyBtn && lens?.calculatedFov) {
+    reapplyBtn.addEventListener('click', () => {
+      if (lens.calculatedFov < Number(srcFovSlider.min)) {
+        srcFovSlider.min = Math.max(1, Math.floor(lens.calculatedFov)).toString();
+      }
+      setSliderValue(srcFovSlider, lens.calculatedFov);
+    });
+  }
+}
+
+async function processImageMetadata(file, imgWidth, imgHeight) {
+  try {
+    const buffer = await file.arrayBuffer();
+    const exif = extractExif(buffer);
+    const lens = calculateLensFov(imgWidth, imgHeight, exif);
+
+    currentImageMeta = {
+      file,
+      width: imgWidth,
+      height: imgHeight,
+      exif,
+      lens,
+    };
+
+    if (lens?.calculatedFov) {
+      const fov = lens.calculatedFov;
+      if (fov < Number(srcFovSlider.min)) {
+        srcFovSlider.min = Math.max(1, Math.floor(fov)).toString();
+      }
+      setSliderValue(srcFovSlider, fov);
+      imgInfoBadge?.classList.remove('hidden');
+      imgInfoBtn?.classList.add('has-exif');
+    } else {
+      imgInfoBadge?.classList.add('hidden');
+      imgInfoBtn?.classList.remove('has-exif');
+    }
+
+    renderImageInfoPanel();
+  } catch (err) {
+    console.warn('Could not read image metadata/EXIF:', err);
+    currentImageMeta = {
+      file,
+      width: imgWidth,
+      height: imgHeight,
+      exif: null,
+      lens: null,
+    };
+    imgInfoBadge?.classList.add('hidden');
+    imgInfoBtn?.classList.remove('has-exif');
+    renderImageInfoPanel();
+  }
+}
+
+imgInfoBtn?.addEventListener('click', () => {
+  const isHidden = imgInfoPanel.classList.contains('hidden');
+  if (isHidden) {
+    imgInfoPanel.classList.remove('hidden');
+    imgInfoBtn.classList.add('active');
+    renderImageInfoPanel();
+  } else {
+    imgInfoPanel.classList.add('hidden');
+    imgInfoBtn.classList.remove('active');
+  }
+});
+
+imgInfoClose?.addEventListener('click', () => {
+  imgInfoPanel?.classList.add('hidden');
+  imgInfoBtn?.classList.remove('active');
+});
+
 // ─── Drag-and-drop ────────────────────────────────────────────────────────────
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
@@ -1171,11 +1400,24 @@ function optimizeSourceFov() {
 
 optimizeFovBtn.addEventListener('click', optimizeSourceFov);
 
-// Press Escape to cancel creation mode
+// Press Escape to close modal, image info panel, or cancel creation mode
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && oMode) {
-    setOMode(null);
-    clearPendingThreePointPreview();
+  if (e.key === 'Escape') {
+    if (helpModal && !helpModal.classList.contains('hidden')) {
+      e.preventDefault();
+      closeHelpModal();
+      return;
+    }
+    if (imgInfoPanel && !imgInfoPanel.classList.contains('hidden')) {
+      e.preventDefault();
+      imgInfoPanel.classList.add('hidden');
+      imgInfoBtn?.classList.remove('active');
+      return;
+    }
+    if (oMode) {
+      setOMode(null);
+      clearPendingThreePointPreview();
+    }
   }
 });
 
